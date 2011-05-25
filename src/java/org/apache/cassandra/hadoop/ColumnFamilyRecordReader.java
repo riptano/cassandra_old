@@ -1,6 +1,6 @@
 package org.apache.cassandra.hadoop;
 /*
- * 
+ *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -8,16 +8,16 @@ package org.apache.cassandra.hadoop;
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
  * KIND, either express or implied.  See the License for the
  * specific language governing permissions and limitations
  * under the License.
- * 
+ *
  */
 
 
@@ -51,6 +51,8 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
     private RowIterator iter;
     private Pair<ByteBuffer, SortedMap<ByteBuffer, IColumn>> currentRow;
     private SlicePredicate predicate;
+    private IndexClause indexClause;
+    private boolean indexClauseAvailable;
     private int totalRowCount; // total number of rows to fetch
     private int batchRowCount; // fetch this many per batch
     private String cfName;
@@ -59,7 +61,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
     private Cassandra.Client client;
     private ConsistencyLevel consistencyLevel;
 
-    public void close() 
+    public void close()
     {
         if (socket != null && socket.isOpen())
         {
@@ -68,7 +70,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
             client = null;
         }
     }
-    
+
     public ByteBuffer getCurrentKey()
     {
         return currentRow.left;
@@ -78,26 +80,32 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
     {
         return currentRow.right;
     }
-    
+
     public float getProgress()
     {
         // the progress is likely to be reported slightly off the actual but close enough
         return ((float)iter.rowsRead()) / totalRowCount;
     }
-    
+
     public void initialize(InputSplit split, TaskAttemptContext context) throws IOException
     {
         this.split = (ColumnFamilySplit) split;
         Configuration conf = context.getConfiguration();
+        if (ConfigHelper.getInputIndexClause(conf) != null)
+        {
+        	indexClauseAvailable = true;
+        	indexClause = ConfigHelper.getInputIndexClause(conf);
+        }
+
         predicate = ConfigHelper.getInputSlicePredicate(conf);
         totalRowCount = ConfigHelper.getInputSplitSize(conf);
         batchRowCount = ConfigHelper.getRangeBatchSize(conf);
         cfName = ConfigHelper.getInputColumnFamily(conf);
         consistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
-        
-        
+
+
         keyspace = ConfigHelper.getInputKeyspace(conf);
-        
+
         try
         {
             // only need to connect once
@@ -129,7 +137,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
 
         iter = new RowIterator();
     }
-    
+
     public boolean nextKeyValue() throws IOException
     {
         if (!iter.hasNext())
@@ -217,43 +225,54 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
 
         private void maybeInit()
         {
-            // check if we need another batch 
+            // check if we need another batch
             if (rows != null && i >= rows.size())
                 rows = null;
-            
+
             if (rows != null)
                 return;
 
             if (startToken == null)
             {
                 startToken = split.getStartToken();
-            } 
+            }
             else if (startToken.equals(split.getEndToken()))
             {
                 rows = null;
                 return;
             }
-            
-            KeyRange keyRange = new KeyRange(batchRowCount)
-                                .setStart_token(startToken)
-                                .setEnd_token(split.getEndToken());
+
+
             try
             {
-                rows = client.get_range_slices(new ColumnParent(cfName),
-                                               predicate,
-                                               keyRange,
-                                               consistencyLevel);
-                  
+                if (indexClauseAvailable)
+                {
+                	rows = client.get_indexed_slices(new ColumnParent(cfName),
+                									 indexClause,
+                									 predicate,
+                									 consistencyLevel);
+                }
+                else
+                {
+                	 KeyRange keyRange = new KeyRange(batchRowCount)
+                     					.setStart_token(startToken)
+                     					.setEnd_token(split.getEndToken());
+
+                	 rows = client.get_range_slices(new ColumnParent(cfName),
+                             predicate,
+                             keyRange,
+                             consistencyLevel);
+                }
                 // nothing new? reached the end
                 if (rows.isEmpty())
                 {
                     rows = null;
                     return;
                 }
-                               
+
                 // reset to iterate through this new batch
                 i = 0;
-                
+
                 // prepare for the next slice to be read
                 KeySlice lastRow = rows.get(rows.size() - 1);
                 ByteBuffer rowkey = lastRow.key;
@@ -278,7 +297,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
             maybeInit();
             if (rows == null)
                 return endOfData();
-            
+
             totalRead++;
             KeySlice ks = rows.get(i++);
             SortedMap<ByteBuffer, IColumn> map = new TreeMap<ByteBuffer, IColumn>(comparator);

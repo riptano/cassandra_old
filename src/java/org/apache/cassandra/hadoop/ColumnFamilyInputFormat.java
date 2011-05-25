@@ -36,7 +36,13 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.IColumn;
 import org.apache.cassandra.thrift.Cassandra;
+import org.apache.cassandra.thrift.CfDef;
+import org.apache.cassandra.thrift.ColumnDef;
+import org.apache.cassandra.thrift.IndexClause;
+import org.apache.cassandra.thrift.IndexExpression;
 import org.apache.cassandra.thrift.InvalidRequestException;
+import org.apache.cassandra.thrift.KsDef;
+import org.apache.cassandra.thrift.NotFoundException;
 import org.apache.cassandra.thrift.TokenRange;
 import org.apache.cassandra.thrift.TBinaryProtocol;
 import org.apache.hadoop.conf.Configuration;
@@ -70,6 +76,7 @@ public class ColumnFamilyInputFormat extends InputFormat<ByteBuffer, SortedMap<B
 
     private String keyspace;
     private String cfName;
+    private IndexClause index;
 
     private static void validateConfiguration(Configuration conf)
     {
@@ -92,8 +99,8 @@ public class ColumnFamilyInputFormat extends InputFormat<ByteBuffer, SortedMap<B
         // cannonical ranges and nodes holding replicas
         List<TokenRange> masterRangeNodes = getRangeMap(conf);
 
-        keyspace = ConfigHelper.getInputKeyspace(context.getConfiguration());
-        cfName = ConfigHelper.getInputColumnFamily(context.getConfiguration());
+        keyspace = ConfigHelper.getInputKeyspace(conf);
+        cfName = ConfigHelper.getInputColumnFamily(conf);
 
         // cannonical ranges, split into pieces, fetching the splits in parallel
         ExecutorService executor = Executors.newCachedThreadPool();
@@ -236,4 +243,5 @@ public class ColumnFamilyInputFormat extends InputFormat<ByteBuffer, SortedMap<B
     {
         return new ColumnFamilyRecordReader();
     }
+
 }

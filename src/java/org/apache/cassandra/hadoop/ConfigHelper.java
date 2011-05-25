@@ -1,6 +1,6 @@
 package org.apache.cassandra.hadoop;
 /*
- * 
+ *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -8,20 +8,21 @@ package org.apache.cassandra.hadoop;
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
  * KIND, either express or implied.  See the License for the
  * specific language governing permissions and limitations
  * under the License.
- * 
+ *
  */
 
 import org.apache.cassandra.config.ConfigurationException;
 import org.apache.cassandra.dht.IPartitioner;
+import org.apache.cassandra.thrift.IndexClause;
 import org.apache.cassandra.thrift.SlicePredicate;
 import org.apache.cassandra.thrift.TBinaryProtocol;
 import org.apache.cassandra.utils.FBUtilities;
@@ -44,6 +45,7 @@ public class ConfigHelper
     private static final String INPUT_PREDICATE_CONFIG = "cassandra.input.predicate";
     private static final String OUTPUT_PREDICATE_CONFIG = "cassandra.output.predicate";
     private static final String INPUT_SPLIT_SIZE_CONFIG = "cassandra.input.split.size";
+    private static final String INPUT_INDEX_CLAUSE_CONFIG = "cassandra.input.indexClause";
     private static final int DEFAULT_SPLIT_SIZE = 64 * 1024;
     private static final String RANGE_BATCH_SIZE_CONFIG = "cassandra.range.batch.size";
     private static final int DEFAULT_RANGE_BATCH_SIZE = 4096;
@@ -138,6 +140,12 @@ public class ConfigHelper
         conf.setInt(INPUT_SPLIT_SIZE_CONFIG, splitsize);
     }
 
+    /**
+     * Return the size of input split. If no value has be set, a default value of 65536 would be returned.
+     *
+     * @param conf Job configuration you are about to run
+     * @return input split size
+     */
     public static int getInputSplitSize(Configuration conf)
     {
         return conf.getInt(INPUT_SPLIT_SIZE_CONFIG, DEFAULT_SPLIT_SIZE);
@@ -199,17 +207,17 @@ public class ConfigHelper
     {
         return conf.get(INPUT_KEYSPACE_CONFIG);
     }
-    
+
     public static String getOutputKeyspace(Configuration conf)
     {
         return conf.get(OUTPUT_KEYSPACE_CONFIG);
     }
-    
+
     public static String getInputKeyspaceUserName(Configuration conf)
     {
     	return conf.get(INPUT_KEYSPACE_USERNAME_CONFIG);
     }
-    
+
     public static String getInputKeyspacePassword(Configuration conf)
     {
     	return conf.get(INPUT_KEYSPACE_PASSWD_CONFIG);
@@ -219,7 +227,7 @@ public class ConfigHelper
     {
     	return conf.get(OUTPUT_KEYSPACE_USERNAME_CONFIG);
     }
-    
+
     public static String getOutputKeyspacePassword(Configuration conf)
     {
     	return conf.get(OUTPUT_KEYSPACE_PASSWD_CONFIG);
@@ -229,7 +237,7 @@ public class ConfigHelper
     {
         return conf.get(INPUT_COLUMNFAMILY_CONFIG);
     }
-    
+
     public static String getOutputColumnFamily(Configuration conf)
     {
         return conf.get(OUTPUT_COLUMNFAMILY_CONFIG);
@@ -267,16 +275,91 @@ public class ConfigHelper
 
     public static void setPartitioner(Configuration conf, String classname)
     {
-        conf.set(PARTITIONER_CONFIG, classname); 
+        conf.set(PARTITIONER_CONFIG, classname);
     }
 
     public static IPartitioner getPartitioner(Configuration conf)
     {
         try
         {
-            return FBUtilities.newPartitioner(conf.get(PARTITIONER_CONFIG)); 
+            return FBUtilities.newPartitioner(conf.get(PARTITIONER_CONFIG));
         }
         catch (ConfigurationException e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Set the index clause that determines the key selections.
+     *
+     * @param conf      Job configuration you are about to run
+     * @param index 	index clause to be set
+     */
+    public static void setInputIndexClause(Configuration conf, IndexClause index)
+    {
+        conf.set(INPUT_INDEX_CLAUSE_CONFIG, indexClauseToString(index));
+    }
+
+    /**
+     * Return the index clause. If nothing has been set, null will be returned.
+     *
+     * @param conf		Job configuration you are about to run
+     * @return			index clause
+     */
+    public static IndexClause getInputIndexClause(Configuration conf)
+    {
+    	String str = conf.get(INPUT_INDEX_CLAUSE_CONFIG);
+    	if (str != null && !str.equals("")) {
+    		return indexFromString(str);
+    	} else {
+    		return null;
+    	}
+    }
+
+    /**
+     * Return the index clause in the raw string format.
+     *
+     * @param conf		Job configuration you are about to run
+     * @return			index clause in string format
+     */
+    public static String getRawInputIndexClause(Configuration conf)
+    {
+        return conf.get(INPUT_INDEX_CLAUSE_CONFIG);
+    }
+
+    /**
+     * Construct the index clause from the configuration string.
+     *
+     * @param st index clause in string format
+     * @return index clause
+     */
+    private static IndexClause indexFromString(String st)
+    {
+        assert st != null;
+        TDeserializer deserializer = new TDeserializer(new TBinaryProtocol.Factory());
+        IndexClause clause = new IndexClause();
+        try
+        {
+            deserializer.deserialize(clause, FBUtilities.hexToBytes(st));
+        }
+        catch (TException e)
+        {
+            throw new RuntimeException(e);
+        }
+        return clause;
+    }
+
+    private static String indexClauseToString(IndexClause index)
+    {
+        assert index != null;
+
+        TSerializer serializer = new TSerializer(new TBinaryProtocol.Factory());
+        try
+        {
+            return FBUtilities.bytesToHex(serializer.serialize(index));
+        }
+        catch (TException e)
         {
             throw new RuntimeException(e);
         }
