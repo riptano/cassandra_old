@@ -20,7 +20,10 @@ package org.apache.cassandra.tools;
 
 import java.io.File;
 import java.io.IOException;
+import java.security.PrivilegedActionException;
 import java.util.*;
+
+import javax.security.auth.login.LoginException;
 
 import org.apache.commons.cli.*;
 
@@ -53,6 +56,22 @@ public class StandaloneScrubber
     public static void main(String args[]) throws IOException
     {
         Options options = Options.parseArgs(args);
+        
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (LoginException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        catch (PrivilegedActionException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        
         try
         {
             // load keyspace descriptions.

@@ -73,6 +73,7 @@ public class DatabaseDescriptor
     private static IAuthenticator authenticator = new AllowAllAuthenticator();
     private static IAuthority authority = new AllowAllAuthority();
     private static IAuthorityContainer authorityContainer;
+    private static IAuthenticationClient authenticationClient = new NullAuthenticationClient();
 
     private final static String DEFAULT_CONFIGURATION = "cassandra.yaml";
 
@@ -205,6 +206,10 @@ public class DatabaseDescriptor
             authority.validateConfiguration();
 
             authorityContainer = new IAuthorityContainer(authority);
+            
+            if (conf.authentication_client != null)
+                authenticationClient = FBUtilities.<IAuthenticationClient>construct(conf.authentication_client, "authentication_client");
+            authenticationClient.validateConfiguration();
 
             /* Hashing strategy */
             if (conf.partitioner == null)
@@ -579,6 +584,11 @@ public class DatabaseDescriptor
     public static IAuthorityContainer getAuthorityContainer()
     {
         return authorityContainer;
+    }
+    
+    public static IAuthenticationClient getAuthenticationClient()
+    {
+        return authenticationClient;
     }
 
     public static int getThriftMaxMessageLength()

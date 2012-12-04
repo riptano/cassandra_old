@@ -21,7 +21,10 @@ package org.apache.cassandra.tools;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.security.PrivilegedActionException;
 import java.util.*;
+
+import javax.security.auth.login.LoginException;
 
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -466,6 +469,21 @@ public class SSTableImport
             isSorted = true;
         }
 
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (LoginException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        catch (PrivilegedActionException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        
         DatabaseDescriptor.loadSchemas();
         if (Schema.instance.getNonSystemTables().size() < 1)
         {

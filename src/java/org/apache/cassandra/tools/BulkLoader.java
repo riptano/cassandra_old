@@ -22,7 +22,10 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.security.PrivilegedActionException;
 import java.util.*;
+
+import javax.security.auth.login.LoginException;
 
 import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -56,6 +59,22 @@ public class BulkLoader
     public static void main(String args[]) throws IOException
     {
         LoaderOptions options = LoaderOptions.parseArgs(args);
+        
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (LoginException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        catch (PrivilegedActionException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+
         try
         {
             OutputHandler handler = new OutputHandler.SystemOutput(options.verbose, options.debug);

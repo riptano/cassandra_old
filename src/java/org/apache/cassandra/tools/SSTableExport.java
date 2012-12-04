@@ -22,7 +22,10 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.ByteBuffer;
+import java.security.PrivilegedActionException;
 import java.util.*;
+
+import javax.security.auth.login.LoginException;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -391,6 +394,21 @@ public class SSTableExport
         String[] excludes = cmd.getOptionValues(EXCLUDEKEY_OPTION);
         String ssTableFileName = new File(cmd.getArgs()[0]).getAbsolutePath();
 
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (LoginException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        catch (PrivilegedActionException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        
         DatabaseDescriptor.loadSchemas();
         if (Schema.instance.getNonSystemTables().size() < 1)
         {
