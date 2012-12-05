@@ -570,4 +570,4 @@ encryption_options:
 
 # authentication client used by sstable commands, implementing IAuthenticationClient; used to identify users
 # to the temporary security (kerberos) server
-authentication_client: org.apache.cassandra.auth.NullAuthenticationClient    
+authentication_client: org.apache.cassandra.auth.NullAuthenticationClient
