@@ -41,8 +41,8 @@ public interface TClientTransportFactory
      * Example:
      *
      * <pre>
-     * TTransport transport = clientTransportFactory.openTransport(address, port)
-     * Cassandra.Iface client = new Cassandra.Client(new BinaryProtocol(transport);
+     * TTransport transport = clientTransportFactory.openTransport(address, port);
+     * Cassandra.Iface client = new Cassandra.Client(new BinaryProtocol(transport));
      * </pre>
      *
      * @param host fully qualified hostname of the server
