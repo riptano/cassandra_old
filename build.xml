@@ -743,7 +743,7 @@
       <jar jarfile="${build.dir}/${ant.project.name}-thrift-${version}.jar"
            basedir="${build.classes.thrift}">
         <fileset dir="${build.classes.main}">
-          <include name="org/apache/cassandra/thrift/ITransportFactory.class" />
+          <include name="org/apache/cassandra/thrift/TClientTransportFactory.class" />
           <include name="org/apache/cassandra/thrift/TFramedTransportFactory.class" />
         </fileset>
         <manifest>
