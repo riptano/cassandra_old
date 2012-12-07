@@ -30,11 +30,9 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import com.google.common.collect.*;
-import org.apache.thrift.transport.TTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.config.ConfigurationException;
 import org.apache.cassandra.db.IColumn;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -49,7 +47,6 @@ import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.thrift.TException;
-import org.apache.thrift.transport.TSocket;
 
 public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap<ByteBuffer, IColumn>>
     implements org.apache.hadoop.mapred.RecordReader<ByteBuffer, SortedMap<ByteBuffer, IColumn>>
@@ -65,13 +62,13 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
     private boolean isEmptyPredicate;
     private int totalRowCount; // total number of rows to fetch
     private int batchSize; // fetch this many per batch
-    private String cfName;
     private String keyspace;
-    private TSocket socket;
-    private Cassandra.Client client;
+    private String cfName;
+    private ClientHolder client;
     private ConsistencyLevel consistencyLevel;
     private int keyBufferSize = 8192;
     private List<IndexExpression> filter;
+
 
     public ColumnFamilyRecordReader()
     {
@@ -86,12 +83,8 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
 
     public void close()
     {
-        if (socket != null && socket.isOpen())
-        {
-            socket.close();
-            socket = null;
-            client = null;
-        }
+        if (client != null)
+            client.close();
     }
 
     public ByteBuffer getCurrentKey()
@@ -147,33 +140,18 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
         batchSize = ConfigHelper.getRangeBatchSize(conf);
         cfName = ConfigHelper.getInputColumnFamily(conf);
         consistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
-
-
         keyspace = ConfigHelper.getInputKeyspace(conf);
 
         try
         {
             // only need to connect once
-            if (socket != null && socket.isOpen())
+            if (client != null && client.transport.isOpen())
                 return;
 
             // create connection using thrift
             String location = getLocation();
-            socket = new TSocket(location, ConfigHelper.getInputRpcPort(conf));
-            TTransport transport = ConfigHelper.getInputTransportFactory(conf).openTransport(socket);
-            TBinaryProtocol binaryProtocol = new TBinaryProtocol(transport);
-            client = new Cassandra.Client(binaryProtocol);
-
-            // log in
-            client.set_keyspace(keyspace);
-            if (ConfigHelper.getInputKeyspaceUserName(conf) != null)
-            {
-                Map<String, String> creds = new HashMap<String, String>();
-                creds.put(IAuthenticator.USERNAME_KEY, ConfigHelper.getInputKeyspaceUserName(conf));
-                creds.put(IAuthenticator.PASSWORD_KEY, ConfigHelper.getInputKeyspacePassword(conf));
-                AuthenticationRequest authRequest = new AuthenticationRequest(creds);
-                client.login(authRequest);
-            }
+            int port = ConfigHelper.getInputRpcPort(conf);
+            client = ColumnFamilyInputFormat.createAuthenticatedClient(location, port, conf);
         }
         catch (Exception e)
         {
@@ -242,11 +220,11 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
         {
             try
             {
-                partitioner = FBUtilities.newPartitioner(client.describe_partitioner());
+                partitioner = FBUtilities.newPartitioner(client.thriftClient.describe_partitioner());
 
                 // Get the Keyspace metadata, then get the specific CF metadata
                 // in order to populate the sub/comparator.
-                KsDef ks_def = client.describe_keyspace(keyspace);
+                KsDef ks_def = client.thriftClient.describe_keyspace(keyspace);
                 List<String> cfnames = new ArrayList<String>();
                 for (CfDef cfd : ks_def.cf_defs)
                     cfnames.add(cfd.name);
@@ -354,7 +332,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
                                 .setRow_filter(filter);
             try
             {
-                rows = client.get_range_slices(new ColumnParent(cfName), predicate, keyRange, consistencyLevel);
+                rows = client.thriftClient.get_range_slices(new ColumnParent(cfName), predicate, keyRange, consistencyLevel);
 
                 // nothing new? reached the end
                 if (rows.isEmpty())
@@ -451,7 +429,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
 
             try
             {
-                rows = client.get_paged_slice(cfName, keyRange, lastColumn, consistencyLevel);
+                rows = client.thriftClient.get_paged_slice(cfName, keyRange, lastColumn, consistencyLevel);
                 int n = 0;
                 for (KeySlice row : rows)
                     n += row.columns.size();

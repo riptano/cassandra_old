@@ -38,7 +38,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.RecordWriter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.thrift.TException;
-import org.apache.thrift.transport.TSocket;
 
 
 /**
@@ -54,8 +53,6 @@ import org.apache.thrift.transport.TSocket;
  * </p>
  *
  * @see ColumnFamilyOutputFormat
- * @see OutputFormat
- *
  */
 final class ColumnFamilyRecordWriter extends RecordWriter<ByteBuffer,List<Mutation>>
 implements org.apache.hadoop.mapred.RecordWriter<ByteBuffer,List<Mutation>>
@@ -201,8 +198,7 @@ implements org.apache.hadoop.mapred.RecordWriter<ByteBuffer,List<Mutation>>
         // when the client is closed.
         private volatile IOException lastException;
 
-        private Cassandra.Client thriftClient;
-        private TSocket thriftSocket;
+        private ClientHolder client;
 
         /**
          * Constructs an {@link RangeClient} for the given endpoints.
@@ -255,12 +251,8 @@ implements org.apache.hadoop.mapred.RecordWriter<ByteBuffer,List<Mutation>>
 
         private void closeInternal()
         {
-            if (thriftSocket != null)
-            {
-                thriftSocket.close();
-                thriftSocket = null;
-                thriftClient = null;
-            }
+            if (client != null)
+                client.close();
         }
 
         /**
@@ -305,7 +297,7 @@ implements org.apache.hadoop.mapred.RecordWriter<ByteBuffer,List<Mutation>>
                     // send the mutation to the last-used endpoint.  first time through, this will NPE harmlessly.
                     try
                     {
-                        thriftClient.batch_mutate(batch, consistencyLevel);
+                        client.thriftClient.batch_mutate(batch, consistencyLevel);
                         break;
                     }
                     catch (Exception e)
@@ -322,8 +314,9 @@ implements org.apache.hadoop.mapred.RecordWriter<ByteBuffer,List<Mutation>>
                     try
                     {
                         InetAddress address = iter.next();
-                        thriftSocket = new TSocket(address.getHostName(), ConfigHelper.getOutputRpcPort(conf));
-                        thriftClient = ColumnFamilyOutputFormat.createAuthenticatedClient(thriftSocket, conf);
+                        String host = address.getHostName();
+                        int port = ConfigHelper.getOutputRpcPort(conf);
+                        client = ColumnFamilyOutputFormat.createAuthenticatedClient(host, port, conf);
                     }
                     catch (Exception e)
                     {
