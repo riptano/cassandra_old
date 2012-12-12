@@ -18,10 +18,11 @@
 package org.apache.cassandra.cli;
 
 import org.apache.cassandra.thrift.TClientTransportFactory;
+import org.apache.cassandra.thrift.TFramedTransportFactory;
 import org.apache.commons.cli.*;
+import org.apache.thrift.transport.TFramedTransport;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  *
@@ -87,8 +88,9 @@ public class CliOptions
 
     public void processArgs(CliSessionState css, String[] args)
     {
-        CommandLineParser parser = new GnuParser();
+        args = setSystemProperties(args);
 
+        CommandLineParser parser = new GnuParser();
         try
         {
             CommandLine cmd = parser.parse(options, args, false);
@@ -102,8 +104,10 @@ public class CliOptions
                 css.hostName = DEFAULT_HOST;
             }
 
-            if (cmd.hasOption(TClientTransportFactory.LONG_OPTION))
-                css.transportFactory = validateAndSetClientTransportFactory(cmd.getOptionValue(TClientTransportFactory.LONG_OPTION));
+            String transportFactoryClassName = cmd.hasOption(TClientTransportFactory.LONG_OPTION)
+                    ? cmd.getOptionValue(TClientTransportFactory.LONG_OPTION)
+                    : System.getProperty(TClientTransportFactory.PROPERTY_KEY, TFramedTransportFactory.class.toString());
+            css.transportFactory = validateAndSetClientTransportFactory(transportFactoryClassName);
 
             if (cmd.hasOption(DEBUG_OPTION))
             {
@@ -192,6 +196,22 @@ public class CliOptions
             printUsage();
             System.exit(1);
         }
+    }
+
+    private static String[] setSystemProperties(String[] args)
+    {
+        List<String> unprocessedArgs = new ArrayList<String>();
+        for (String arg : args)
+        {
+            if (arg.matches("-D[\\w\\.]+=.*"))
+            {
+                String[] keyValue = arg.split("=");
+                System.setProperty(keyValue[0].substring(2), keyValue[1]);
+            }
+            else
+                unprocessedArgs.add(arg);
+        }
+        return unprocessedArgs.toArray(new String[unprocessedArgs.size()]);
     }
 
     private static class CLIOptions extends Options

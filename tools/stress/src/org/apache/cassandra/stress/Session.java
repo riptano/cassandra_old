@@ -146,6 +146,8 @@ public class Session implements Serializable
     public Session(String[] arguments) throws IllegalArgumentException
     {
         float STDev = 0.1f;
+
+        arguments = setSystemProperties(arguments);
         CommandLineParser parser = new PosixParser();
 
         try
@@ -374,28 +376,25 @@ public class Session implements Serializable
                 comparator = null;
                 timeUUIDComparator = false;
             }
-            
+
+
             if (cmd.hasOption(TClientTransportFactory.SHORT_OPTION))
             {
                 transportFactory = cmd.getOptionValue(TClientTransportFactory.SHORT_OPTION);
-                try
+                if (transportFactory == null)
                 {
-                    if (transportFactory == null)
-                    {
-                        System.err.println("Option " + TClientTransportFactory.SHORT_OPTION + " needs argument.");
-                        System.exit(1);
-                    }
-                    else if (!TClientTransportFactory.class.isAssignableFrom(Class.forName(transportFactory)))
-                    {
-                        System.err.println("Transport factory does not implement TClientTransportFactory: " + transportFactory);
-                        System.exit(1);
-                    }
-                } catch (ClassNotFoundException ex)
-                {
-                    System.err.println("Class not found: " + ex.getMessage());
+                    System.err.println("Option " + TClientTransportFactory.SHORT_OPTION + " needs argument.");
                     System.exit(1);
                 }
             }
+            else
+            {
+                transportFactory = System.getProperty(
+                        TClientTransportFactory.PROPERTY_KEY,
+                        TFramedTransportFactory.class.toString());
+            }
+
+            validateTransportFactory();
         }
         catch (ParseException e)
         {
@@ -412,6 +411,40 @@ public class Session implements Serializable
         operations = new AtomicInteger();
         keys = new AtomicInteger();
         latency = new AtomicLong();
+    }
+
+    private void validateTransportFactory()
+    {
+        try
+        {
+            assert transportFactory != null : "Client transport factory must not be null";
+            if (!TClientTransportFactory.class.isAssignableFrom(Class.forName(transportFactory)))
+            {
+                System.err.println("Transport factory does not implement TClientTransportFactory: " + transportFactory);
+                System.exit(1);
+            }
+        }
+        catch (ClassNotFoundException ex)
+        {
+            System.err.println("Class not found: " + ex.getMessage());
+            System.exit(1);
+        }
+    }
+
+    private String[] setSystemProperties(String[] args)
+    {
+        List<String> unprocessedArgs = new ArrayList<String>();
+        for (String arg : args)
+        {
+            if (arg.matches("-D[\\w\\.]+=.*"))
+            {
+                String[] keyValue = arg.split("=");
+                System.setProperty(keyValue[0].substring(2), keyValue[1]);
+            }
+            else
+                unprocessedArgs.add(arg);
+        }
+        return unprocessedArgs.toArray(new String[unprocessedArgs.size()]);
     }
 
     public int getCardinality()
