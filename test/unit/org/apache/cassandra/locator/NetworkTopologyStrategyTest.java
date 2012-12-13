@@ -84,6 +84,24 @@ public class NetworkTopologyStrategyTest
         assert 6 == endpoints.size();
         assert 6 == new HashSet<InetAddress>(endpoints).size(); // ensure uniqueness
     }
+    
+    @Test
+    public void testEndpointsCalculationIsNotCaseSensitive() throws IOException, ParserConfigurationException, SAXException, ConfigurationException
+    {
+        IEndpointSnitch snitch = new PropertyFileSnitch();
+        TokenMetadata metadata = new TokenMetadata();
+        createDummyTokens(metadata, true);
+
+        Map<String, String> configOptions = new HashMap<String, String>();
+        configOptions.put("dc1", "3");
+        configOptions.put("dc2", "2");
+        configOptions.put("dc3", "1");
+
+        NetworkTopologyStrategy strategy = new NetworkTopologyStrategy(table, metadata, snitch, configOptions);
+        ArrayList<InetAddress> endpoints = strategy.getNaturalEndpoints(new StringToken("123"));
+        assert 6 == endpoints.size();
+        assert 6 == new HashSet<InetAddress>(endpoints).size(); // ensure uniqueness
+    }
 
     public void createDummyTokens(TokenMetadata metadata, boolean populateDC3) throws UnknownHostException
     {
