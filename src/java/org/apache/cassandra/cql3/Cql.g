@@ -28,11 +28,15 @@ options {
 
     import java.util.ArrayList;
     import java.util.Collections;
+    import java.util.EnumSet;
     import java.util.HashMap;
     import java.util.LinkedHashMap;
     import java.util.List;
     import java.util.Map;
+    import java.util.Set;
 
+    import org.apache.cassandra.auth.DataResource;
+    import org.apache.cassandra.auth.IResource;
     import org.apache.cassandra.auth.Permission;
     import org.apache.cassandra.cql3.statements.*;
     import org.apache.cassandra.utils.Pair;
@@ -141,10 +145,14 @@ cqlStatement returns [ParsedStatement stmt]
     | st12=dropColumnFamilyStatement   { $stmt = st12; }
     | st13=dropIndexStatement          { $stmt = st13; }
     | st14=alterTableStatement         { $stmt = st14; }
-    | st15=grantStatement              { $stmt = st15; }
-    | st16=revokeStatement             { $stmt = st16; }
-    | st17=listGrantsStatement         { $stmt = st17; }
-    | st18=alterKeyspaceStatement      { $stmt = st18; }
+    | st15=alterKeyspaceStatement      { $stmt = st15; }
+    | st16=grantStatement              { $stmt = st16; }
+    | st17=revokeStatement             { $stmt = st17; }
+    | st18=listPermissionsStatement    { $stmt = st18; }
+    | st19=createUserStatement         { $stmt = st19; }
+    | st20=alterUserStatement          { $stmt = st20; }
+    | st21=dropUserStatement           { $stmt = st21; }
+    | st22=listUsersStatement          { $stmt = st22; }
     ;
 
 /*
@@ -451,23 +459,16 @@ truncateStatement returns [TruncateStatement stmt]
     ;
 
 /**
- * GRANT <permission> ON <resource> TO <username> [WITH GRANT OPTION]
+ * GRANT <permission> ON <resource> TO <username>
  */
 grantStatement returns [GrantStatement stmt]
-    @init { boolean withGrant = false; }
     : K_GRANT
-          permission
+          permissionOrAll
       K_ON
-          resource=columnFamilyName
+          resource
       K_TO
-          user=(IDENT | STRING_LITERAL)
-      (K_WITH K_GRANT K_OPTION { withGrant = true; })?
-      {
-        $stmt = new GrantStatement($permission.perm,
-                                   resource,
-                                   $user.text,
-                                   withGrant);
-      }
+          username
+      { $stmt = new GrantStatement($permissionOrAll.perms, $resource.res, $username.text); }
     ;
 
 /**
@@ -475,26 +476,99 @@ grantStatement returns [GrantStatement stmt]
  */
 revokeStatement returns [RevokeStatement stmt]
     : K_REVOKE
-        permission
+          permissionOrAll
       K_ON
-        resource=columnFamilyName
+          resource
       K_FROM
-        user=(IDENT | STRING_LITERAL)
-      {
-        $stmt = new RevokeStatement($permission.perm,
-                                    $user.text,
-                                    resource);
-      }
+          username
+      { $stmt = new RevokeStatement($permissionOrAll.perms, $resource.res, $username.text); }
     ;
 
-listGrantsStatement returns [ListGrantsStatement stmt]
-    : K_LIST K_GRANTS K_FOR username=(IDENT | STRING_LITERAL) { $stmt = new ListGrantsStatement($username.text); }
+listPermissionsStatement returns [ListPermissionsStatement stmt]
+    @init {
+        IResource resource = null;
+        String username = null;
+        boolean recursive = true;
+    }
+    : K_LIST
+          permissionOrAll
+      ( K_ON resource { resource = $resource.res; } )?
+      ( K_OF username { username = $username.text; } )?
+      ( K_NORECURSIVE { recursive = false; } )?
+      { $stmt = new ListPermissionsStatement($permissionOrAll.perms, resource, username, recursive); }
     ;
 
 permission returns [Permission perm]
-    : p=(K_DESCRIBE | K_USE | K_CREATE | K_ALTER | K_DROP | K_SELECT | K_INSERT | K_UPDATE | K_DELETE | K_FULL_ACCESS | K_NO_ACCESS)
+    : p=(K_CREATE | K_ALTER | K_DROP | K_SELECT | K_MODIFY | K_AUTHORIZE)
     { $perm = Permission.valueOf($p.text.toUpperCase()); }
     ;
+
+permissionOrAll returns [Set<Permission> perms]
+    : K_ALL ( K_PERMISSIONS )?       { $perms = Permission.ALL_DATA; }
+    | p=permission ( K_PERMISSION )? { $perms = EnumSet.of($p.perm); }
+    ;
+
+resource returns [IResource res]
+    : r=dataResource { $res = $r.res; }
+    ;
+
+dataResource returns [DataResource res]
+    : K_ALL K_KEYSPACES { $res = DataResource.root(); }
+    | K_KEYSPACE ks = keyspaceName { $res = DataResource.keyspace($ks.id); }
+    | ( K_COLUMNFAMILY )? cf = columnFamilyName
+      { $res = DataResource.columnFamily($cf.name.getKeyspace(), $cf.name.getColumnFamily()); }
+    ;
+
+/**
+ * CREATE USER <username> [WITH PASSWORD <password>] [SUPERUSER|NOSUPERUSER]
+ */
+createUserStatement returns [CreateUserStatement stmt]
+    @init {
+        UserOptions opts = new UserOptions();
+        boolean superuser = false;
+    }
+    : K_CREATE K_USER username
+      ( K_WITH userOptions[opts] )?
+      ( K_SUPERUSER { superuser = true; } | K_NOSUPERUSER { superuser = false; } )?
+      { $stmt = new CreateUserStatement($username.text, opts, superuser); }
+    ;
+
+/**
+ * ALTER USER <username> [WITH PASSWORD <password>] [SUPERUSER|NOSUPERUSER]
+ */
+alterUserStatement returns [AlterUserStatement stmt]
+    @init {
+        UserOptions opts = new UserOptions();
+        Boolean superuser = null;
+    }
+    : K_ALTER K_USER username
+      ( K_WITH userOptions[opts] )?
+      ( K_SUPERUSER { superuser = true; } | K_NOSUPERUSER { superuser = false; } )?
+      { $stmt = new AlterUserStatement($username.text, opts, superuser); }
+    ;
+
+/**
+ * DROP USER <username>
+ */
+dropUserStatement returns [DropUserStatement stmt]
+    : K_DROP K_USER username { $stmt = new DropUserStatement($username.text); }
+    ;
+
+/**
+ * LIST USERS
+ */
+listUsersStatement returns [ListUsersStatement stmt]
+    : K_LIST K_USERS { $stmt = new ListUsersStatement(); }
+    ;
+
+userOptions[UserOptions opts]
+    : userOption[opts]
+    ;
+
+userOption[UserOptions opts]
+    : k=K_PASSWORD v=STRING_LITERAL { opts.put($k.text, $v.text); }
+    ;
+
 /** DEFINITIONS **/
 
 // Column Identifiers
@@ -606,6 +680,11 @@ native_type returns [String str]
       ) { return $c.text; }
     ;
 
+username
+    : IDENT
+    | STRING_LITERAL
+    ;
+
 unreserved_keyword returns [String str]
     : k=( K_KEY
         | K_CONSISTENCY
@@ -618,6 +697,17 @@ unreserved_keyword returns [String str]
         | K_TYPE
         | K_VALUES
         | K_WRITETIME
+        | K_LIST
+        | K_PERMISSION
+        | K_PERMISSIONS
+        | K_KEYSPACES
+        | K_MODIFY
+        | K_AUTHORIZE
+        | K_USER
+        | K_USERS
+        | K_SUPERUSER
+        | K_NOSUPERUSER
+        | K_PASSWORD
         ) { $str = $k.text; }
     | t=native_type { $str = t; }
     ;
@@ -658,11 +748,11 @@ K_IN:          I N;
 K_CREATE:      C R E A T E;
 K_KEYSPACE:    ( K E Y S P A C E
                  | S C H E M A );
+K_KEYSPACES:   K E Y S P A C E S;
 K_COLUMNFAMILY:( C O L U M N F A M I L Y
                  | T A B L E );
 K_INDEX:       I N D E X;
 K_ON:          O N;
-K_TO:          T O;
 K_DROP:        D R O P;
 K_PRIMARY:     P R I M A R Y;
 K_INTO:        I N T O;
@@ -678,17 +768,6 @@ K_ORDER:       O R D E R;
 K_BY:          B Y;
 K_ASC:         A S C;
 K_DESC:        D E S C;
-K_GRANT:       G R A N T;
-K_GRANTS:      G R A N T S;
-K_REVOKE:      R E V O K E;
-K_OPTION:      O P T I O N;
-K_DESCRIBE:    D E S C R I B E;
-K_FOR:         F O R;
-K_LIST:        L I S T;
-K_FULL_ACCESS: F U L L '_' A C C E S S;
-K_NO_ACCESS:   N O '_' A C C E S S;
-
-
 K_CLUSTERING:  C L U S T E R I N G;
 K_ASCII:       A S C I I;
 K_BIGINT:      B I G I N T;
@@ -706,6 +785,23 @@ K_VARINT:      V A R I N T;
 K_TIMEUUID:    T I M E U U I D;
 K_TOKEN:       T O K E N;
 K_WRITETIME:   W R I T E T I M E;
+
+K_GRANT:       G R A N T;
+K_TO:          T O;
+K_PERMISSION:  P E R M I S S I O N;
+K_PERMISSIONS: P E R M I S S I O N S;
+K_OF:          O F;
+K_REVOKE:      R E V O K E;
+K_MODIFY:      M O D I F Y;
+K_AUTHORIZE:   A U T H O R I Z E;
+K_NORECURSIVE: N O R E C U R S I V E;
+K_LIST:        L I S T;
+
+K_USER:        U S E R;
+K_USERS:       U S E R S;
+K_SUPERUSER:   S U P E R U S E R;
+K_NOSUPERUSER: N O S U P E R U S E R;
+K_PASSWORD:    P A S S W O R D;
 
 // Case-insensitive alpha characters
 fragment A: ('a'|'A');

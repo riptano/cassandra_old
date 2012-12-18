@@ -35,6 +35,7 @@ import org.apache.avro.io.BinaryDecoder;
 import org.apache.avro.io.DecoderFactory;
 import org.apache.avro.specific.SpecificDatumReader;
 import org.apache.avro.specific.SpecificRecord;
+import org.apache.cassandra.auth.DataResource;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.filter.QueryFilter;
@@ -493,7 +494,7 @@ public class DefsTable
             Table.open(ksm.name);
     }
 
-    private static void addColumnFamily(CFMetaData cfm) throws IOException
+    public static void addColumnFamily(CFMetaData cfm)
     {
         assert Schema.instance.getCFMetaData(cfm.ksName, cfm.cfName) == null;
         KSMetaData ksm = Schema.instance.getTableDefinition(cfm.ksName);
@@ -569,6 +570,7 @@ public class DefsTable
         // remove the table from the static instances.
         Table.clear(ksm.name);
         Schema.instance.clearTableDefinition(ksm);
+        DatabaseDescriptor.getAuthorizer().revokeAll(DataResource.keyspace(ksName));
     }
 
     private static void dropColumnFamily(String ksName, String cfName) throws IOException
@@ -592,6 +594,7 @@ public class DefsTable
                 cfs.snapshot(Table.getTimestampedSnapshotName(cfs.columnFamily));
             Table.open(ksm.name).dropCf(cfm.cfId);
         }
+        DatabaseDescriptor.getAuthorizer().revokeAll(DataResource.columnFamily(ksName, cfName));
     }
 
     private static KSMetaData makeNewKeyspaceDefinition(KSMetaData ksm, CFMetaData toExclude)

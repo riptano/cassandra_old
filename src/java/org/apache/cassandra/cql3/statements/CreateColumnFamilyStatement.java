@@ -24,11 +24,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.cassandra.auth.Permission;
 import org.apache.commons.lang.StringUtils;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.Multiset;
 
+import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.config.CFMetaData;
@@ -43,8 +43,6 @@ import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.thrift.CqlResult;
 import org.apache.cassandra.thrift.InvalidRequestException;
-import org.apache.cassandra.io.compress.CompressionParameters;
-import org.apache.cassandra.utils.Pair;
 
 /** A <code>CREATE COLUMNFAMILY</code> parsed from a CQL query statement. */
 public class CreateColumnFamilyStatement extends SchemaAlteringStatement
@@ -68,7 +66,7 @@ public class CreateColumnFamilyStatement extends SchemaAlteringStatement
 
     public void checkAccess(ClientState state) throws InvalidRequestException
     {
-        state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.CREATE);
+        state.hasKeyspaceAccess(keyspace(), Permission.CREATE);
     }
 
     // Column definitions

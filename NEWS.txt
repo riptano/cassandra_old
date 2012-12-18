@@ -9,6 +9,40 @@ upgrade, just in case you need to roll back to the previous version.
 by version X, but the inverse is not necessarily the case.)
 
 
+1.1.7
+=====
+
+Upgrading
+---------
+    - IAuthenticator interface has been updated to support dynamic
+      user creation, modification and removal. Users, even when stored
+      externally, now have to be explicitly created using
+      CREATE USER query first. AllowAllAuthenticator and SimpleAuthenticator
+      have been updated for the new interface, but you'll have to update
+      your old IAuthenticator implementations. To ease this process,
+      a new abstract LegacyAuthenticator class has been added - subclass it
+      in your old IAuthenticator implementaion and everything should just work
+      (this only affects users who implemented custom authenticators).
+    - IAuthority interface has been deprecated in favor of IAuthorizer.
+      AllowAllAuthority and SimpleAuthority have been renamed to
+      AllowAllAuthorizer and SimpleAuthorizer, respectively. In order to
+      simplify the upgrade to the new interface, a new abstract
+      LegacyAuthorizer has been added - you should subclass it in your
+      old IAuthority implementation and everything should just work
+      (this only affects users who implemented custom authorities).
+      'authority' setting in cassandra.yaml has been renamed to 'authorizer',
+      'authority' is no longer recognized. This affects all upgrading users.
+
+Features
+--------
+    - new IAuthorizer interface has replaced the old IAuthority. IAuthorizer
+      allows dynamic permission management via new CQL3 statements:
+      GRANT, REVOKE, LIST PERMISSIONS.
+    - IAuthenticator interface has been updated to support dynamic user
+      creation, modification and removal via new CQL3 statements:
+      CREATE USER, ALTER USER, DROP USER, LIST USERS.
+
+
 1.1.6
 =====
 

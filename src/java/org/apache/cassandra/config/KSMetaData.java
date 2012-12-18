@@ -21,21 +21,19 @@ package org.apache.cassandra.config;
 import java.io.IOException;
 import java.util.*;
 
-import com.google.common.base.Objects;
+import com.google.common.collect.ImmutableMap;
 import org.apache.commons.lang.ObjectUtils;
 import org.apache.commons.lang.StringUtils;
 
+import org.apache.cassandra.auth.Auth;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.QueryPath;
-import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.locator.*;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.CfDef;
 import org.apache.cassandra.thrift.KsDef;
-import org.apache.cassandra.thrift.ColumnDef;
 
 import static org.apache.cassandra.utils.FBUtilities.*;
 
@@ -92,6 +90,12 @@ public final class KSMetaData
                                                 CFMetaData.SchemaColumnFamiliesCf,
                                                 CFMetaData.SchemaColumnsCf);
         return new KSMetaData(Table.SYSTEM_TABLE, LocalStrategy.class, Collections.<String, String>emptyMap(), true, cfDefs);
+    }
+
+    public static KSMetaData authKeyspace()
+    {
+        List<CFMetaData> cfDefs = Arrays.asList(CFMetaData.AuthUsersCf);
+        return new KSMetaData(Auth.AUTH_KS, SimpleStrategy.class, ImmutableMap.of("replication_factor", "1"), true, cfDefs);
     }
 
     public static KSMetaData testMetadata(String name, Class<? extends AbstractReplicationStrategy> strategyClass, Map<String, String> strategyOptions, CFMetaData... cfDefs)

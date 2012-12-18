@@ -32,7 +32,7 @@ import java.util.Properties;
 import org.apache.cassandra.config.ConfigurationException;
 import org.apache.cassandra.io.util.FileUtils;
 
-public class SimpleAuthority implements IAuthority
+public class SimpleAuthorizer extends LegacyAuthorizer
 {
     public final static String ACCESS_FILENAME_PROPERTY = "access.properties";
     // magical property for WRITE permissions to the keyspaces list
@@ -41,10 +41,10 @@ public class SimpleAuthority implements IAuthority
     public EnumSet<Permission> authorize(AuthenticatedUser user, List<Object> resource)
     {
         if (resource.size() < 2 || !Resources.ROOT.equals(resource.get(0)) || !Resources.KEYSPACES.equals(resource.get(1)))
-            return Permission.NONE;
+            return EnumSet.noneOf(Permission.class);
         
         String keyspace, columnFamily = null;
-        EnumSet<Permission> authorized = Permission.NONE;
+        EnumSet<Permission> authorized = EnumSet.noneOf(Permission.class);
         
         // /cassandra/keyspaces
         if (resource.size() == 2)
@@ -82,8 +82,8 @@ public class SimpleAuthority implements IAuthority
             {
                 String kspAdmins = accessProperties.getProperty(KEYSPACES_WRITE_PROPERTY);
                 for (String admin : kspAdmins.split(","))
-                    if (admin.equals(user.username))
-                        return Permission.ALL;
+                    if (admin.equals(user.getName()))
+                        return EnumSet.copyOf(Permission.ALL);
             }
             
             boolean canRead = false, canWrite = false;
@@ -104,7 +104,7 @@ public class SimpleAuthority implements IAuthority
             {
                 for (String reader : readers.split(","))
                 {
-                    if (reader.equals(user.username))
+                    if (reader.equals(user.getName()))
                     {
                         canRead = true;
                         break;
@@ -116,7 +116,7 @@ public class SimpleAuthority implements IAuthority
             {
                 for (String writer : writers.split(","))
                 {
-                    if (writer.equals(user.username))
+                    if (writer.equals(user.getName()))
                     {
                         canWrite = true;
                         break;
@@ -125,7 +125,7 @@ public class SimpleAuthority implements IAuthority
             }
             
             if (canWrite)
-                authorized = Permission.ALL;
+                authorized = EnumSet.copyOf(Permission.ALL);
             else if (canRead)
                 authorized = EnumSet.of(Permission.READ);
                 

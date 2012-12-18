@@ -20,47 +20,25 @@ package org.apache.cassandra.cql3.statements;
 
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.Set;
 
+import org.apache.cassandra.auth.IResource;
 import org.apache.cassandra.auth.Permission;
-import org.apache.cassandra.cql3.CFName;
-import org.apache.cassandra.cql3.CQLStatement;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.thrift.*;
+import org.apache.cassandra.thrift.CqlResult;
+import org.apache.cassandra.thrift.InvalidRequestException;
 
-public class GrantStatement extends ParsedStatement implements CQLStatement
+public class GrantStatement extends PermissionAlteringStatement
 {
-    private final Permission permission;
-    private final CFName resource;
-    private final String username;
-    private final boolean grantOption;
-
-    public GrantStatement(Permission permission, CFName resource, String username, boolean grantOption)
+    public GrantStatement(Set<Permission> permissions, IResource resource, String username)
     {
-        this.permission = permission;
-        this.resource = resource;
-        this.username = username;
-        this.grantOption = grantOption;
+        super(permissions, resource, username);
     }
 
-    public int getBoundsTerms()
+    public CqlResult execute(ClientState state, List<ByteBuffer> variables) throws InvalidRequestException
     {
-        return 0;
-    }
-
-    public void checkAccess(ClientState state) throws InvalidRequestException
-    {}
-
-    public void validate(ClientState state) throws InvalidRequestException, SchemaDisagreementException
-    {}
-
-    public CqlResult execute(ClientState state, List<ByteBuffer> variables) throws InvalidRequestException, UnavailableException, TimedOutException, SchemaDisagreementException
-    {
-        state.grantPermission(permission, username, resource, grantOption);
+        DatabaseDescriptor.getAuthorizer().grant(state.getUser(), permissions, resource, username);
         return null;
-    }
-
-    public Prepared prepare() throws InvalidRequestException
-    {
-        return new Prepared(this);
     }
 }

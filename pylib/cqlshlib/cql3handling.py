@@ -187,6 +187,8 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
                   | <selectStatement>
                   | <dataChangeStatement>
                   | <schemaChangeStatement>
+                  | <authenticationStatement>
+                  | <authorizationStatement>
                   ;
 
 <dataChangeStatement> ::= <insertStatement>
@@ -204,6 +206,17 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
                           | <dropIndexStatement>
                           | <alterTableStatement>
                           ;
+
+<authenticationStatement> ::= <createUserStatement>
+                            | <alterUserStatement>
+                            | <dropUserStatement>
+                            | <listUsersStatement>
+                            ;
+
+<authorizationStatement> ::= <grantStatement>
+                           | <revokeStatement>
+                           | <listPermissionsStatement>
+                           ;
 
 <consistencylevel> ::= cl=( <K_ONE>
                           | <K_QUORUM>
@@ -676,6 +689,59 @@ explain_completion('alterInstructions', 'newcol', '<new_column_name>')
 
 completer_for('alterInstructions', 'optval') \
     (create_cf_option_val_completer)
+
+syntax_rules += r'''
+<username> ::= user=( <identifier> | <stringLiteral> )
+             ;
+
+<createUserStatement> ::= "CREATE" "USER" <username>
+                              ( "WITH" "PASSWORD" <stringLiteral> )?
+                              ( "SUPERUSER" | "NOSUPERUSER" )?
+                        ;
+
+<alterUserStatement> ::= "ALTER" "USER" <username>
+                              ( "WITH" "PASSWORD" <stringLiteral> )?
+                              ( "SUPERUSER" | "NOSUPERUSER" )?
+                       ;
+
+<dropUserStatement> ::= "DROP" "USER" <username>
+                      ;
+
+<listUsersStatement> ::= "LIST" "USERS"
+                       ;
+'''
+
+syntax_rules += r'''
+<grantStatement> ::= "GRANT" <permissionExpr> "ON" <resource> "TO" <username>
+                   ;
+
+<revokeStatement> ::= "REVOKE" <permissionExpr> "ON" <resource> "FROM" <username>
+                    ;
+
+<listPermissionsStatement> ::= "LIST" <permissionExpr>
+                                    ( "ON" <resource> )? ( "OF" <username> )? "NORECURSIVE"?
+                             ;
+
+<permission> ::= "AUTHORIZE"
+               | "CREATE"
+               | "ALTER"
+               | "DROP"
+               | "SELECT"
+               | "MODIFY"
+               ;
+
+<permissionExpr> ::= ( <permission> "PERMISSION"? )
+                   | ( "ALL" "PERMISSIONS"? )
+                   ;
+
+<resource> ::= <dataResource>
+             ;
+
+<dataResource> ::= ( "ALL" "KEYSPACES" )
+                 | ( "KEYSPACE" <keyspaceName> )
+                 | ( "TABLE"? <columnFamilyName> )
+                 ;
+'''
 
 # END SYNTAX/COMPLETION RULE DEFINITIONS
 

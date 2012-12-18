@@ -18,15 +18,11 @@
  */
 package org.apache.cassandra.cql3.statements;
 
-import java.io.IOException;
-
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.MigrationManager;
-import org.apache.cassandra.thrift.CfDef;
-import org.apache.cassandra.thrift.ColumnDef;
 import org.apache.cassandra.thrift.InvalidRequestException;
 
 public class DropIndexStatement extends SchemaAlteringStatement
@@ -41,43 +37,45 @@ public class DropIndexStatement extends SchemaAlteringStatement
 
     public void checkAccess(ClientState state) throws InvalidRequestException
     {
-        state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.ALTER);
+        state.hasColumnFamilyAccess(keyspace(), findIndexedCF().cfName, Permission.ALTER);
     }
 
     public void announceMigration() throws InvalidRequestException, ConfigurationException
     {
-        CFMetaData updatedCfm = null;
-
-        KSMetaData ksm = Schema.instance.getTableDefinition(keyspace());
-
-        for (CFMetaData cfm : ksm.cfMetaData().values())
-        {
-            updatedCfm = getUpdatedCFMetadata(cfm);
-            if (updatedCfm != null)
-                break;
-        }
-
-        if (updatedCfm == null)
-            throw new InvalidRequestException("Index '" + indexName + "' could not be found in any of the column families of keyspace '" + keyspace() + "'");
-
+        CFMetaData updatedCfm = updateCFMetadata(findIndexedCF());
         MigrationManager.announceColumnFamilyUpdate(updatedCfm);
     }
 
-    private CFMetaData getUpdatedCFMetadata(CFMetaData cfm) throws InvalidRequestException
+    private CFMetaData updateCFMetadata(CFMetaData cfm) throws InvalidRequestException
+    {
+        ColumnDefinition column = findIndexedColumn(cfm);
+        assert column != null;
+        CFMetaData cloned = cfm.clone();
+        ColumnDefinition toChange = cloned.getColumn_metadata().get(column.name);
+        assert toChange.getIndexName() != null && toChange.getIndexName().equals(indexName);
+        toChange.setIndexName(null);
+        toChange.setIndexType(null, null);
+        return cloned;
+    }
+
+    private CFMetaData findIndexedCF() throws InvalidRequestException
+    {
+        KSMetaData ksm = Schema.instance.getTableDefinition(keyspace());
+        for (CFMetaData cfm : ksm.cfMetaData().values())
+        {
+            if (findIndexedColumn(cfm) != null)
+                return cfm;
+        }
+        throw new InvalidRequestException("Index '" + indexName + "' could not be found in any of the column families of keyspace '" + keyspace() + "'");
+    }
+
+    private ColumnDefinition findIndexedColumn(CFMetaData cfm)
     {
         for (ColumnDefinition column : cfm.getColumn_metadata().values())
         {
             if (column.getIndexType() != null && column.getIndexName() != null && column.getIndexName().equals(indexName))
-            {
-                CFMetaData cloned = cfm.clone();
-                ColumnDefinition toChange = cloned.getColumn_metadata().get(column.name);
-                assert toChange.getIndexName() != null && toChange.getIndexName().equals(indexName);
-                toChange.setIndexName(null);
-                toChange.setIndexType(null, null);
-                return cloned;
-            }
+                return column;
         }
-
         return null;
     }
 }
