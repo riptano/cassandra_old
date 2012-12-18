@@ -33,14 +33,22 @@ public class ColumnFamilySplit extends InputSplit implements Writable, org.apach
 {
     private String startToken;
     private String endToken;
+    private long length;
     private String[] dataNodes;
 
+    @Deprecated
     public ColumnFamilySplit(String startToken, String endToken, String[] dataNodes)
+    {
+        this(startToken, endToken, Long.MAX_VALUE, dataNodes);
+    }
+
+    public ColumnFamilySplit(String startToken, String endToken, long length, String[] dataNodes)
     {
         assert startToken != null;
         assert endToken != null;
         this.startToken = startToken;
         this.endToken = endToken;
+        this.length = length;
         this.dataNodes = dataNodes;
     }
 
@@ -58,8 +66,7 @@ public class ColumnFamilySplit extends InputSplit implements Writable, org.apach
 
     public long getLength()
     {
-        // only used for sorting splits. we don't have the capability, yet.
-        return Long.MAX_VALUE;
+        return length;
     }
 
     public String[] getLocations()
@@ -76,7 +83,6 @@ public class ColumnFamilySplit extends InputSplit implements Writable, org.apach
     {
         out.writeUTF(startToken);
         out.writeUTF(endToken);
-
         out.writeInt(dataNodes.length);
         for (String endpoint : dataNodes)
         {
@@ -88,7 +94,6 @@ public class ColumnFamilySplit extends InputSplit implements Writable, org.apach
     {
         startToken = in.readUTF();
         endToken = in.readUTF();
-
         int numOfEndpoints = in.readInt();
         dataNodes = new String[numOfEndpoints];
         for(int i = 0; i < numOfEndpoints; i++)

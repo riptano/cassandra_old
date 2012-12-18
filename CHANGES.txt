@@ -2,11 +2,18 @@
  * Add ability to use custom TServerFactory implementations (CASSANDRA-4608)
  * Pluggable Thrift transport factories for CLI (CASSANDRA-4609)
 
+1.1.8
+ * Fall back to old describe_splits if d_s_ex is not available (CASSANDRA-4803)
+
 1.1.7
+ * reset getRangeSlice filter after finishing a row for get_paged_slice
+   (CASSANDRA-4919)
+ * expunge row cache post-truncate (CASSANDRA-4940)
+ * remove IAuthority2 (CASSANDRA-4875)
+ * add get[Row|Key]CacheEntries to CacheServiceMBean (CASSANDRA-4859)
  * fix get_paged_slice to wrap to next row correctly (CASSANDRA-4816)
  * fix indexing empty column values (CASSANDRA-4832)
  * (CQL) fix CREATE COLUMNFAMILY permissions check (CASSANDRA-4864)
-
 
 1.1.6
  * Wait for writes on synchronous read digest mismatch (CASSANDRA-4792)

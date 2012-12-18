@@ -99,7 +99,9 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
 
     public float getProgress()
     {
-        // TODO this is totally broken for wide rows
+        if (!iter.hasNext())
+            return 1.0F;
+
         // the progress is likely to be reported slightly off the actual but close enough
         float progress = ((float) iter.rowsRead() / totalRowCount);
         return progress > 1.0F ? 1.0F : progress;
@@ -136,7 +138,9 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
         predicate = ConfigHelper.getInputSlicePredicate(conf);
         boolean widerows = ConfigHelper.getInputIsWide(conf);
         isEmptyPredicate = isEmptyPredicate(predicate);
-        totalRowCount = ConfigHelper.getInputSplitSize(conf);
+        totalRowCount = (this.split.getLength() < Long.MAX_VALUE)
+                ? (int) this.split.getLength()
+                : ConfigHelper.getInputSplitSize(conf);
         batchSize = ConfigHelper.getRangeBatchSize(conf);
         cfName = ConfigHelper.getInputColumnFamily(conf);
         consistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
@@ -165,7 +169,11 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
     public boolean nextKeyValue() throws IOException
     {
         if (!iter.hasNext())
+        {
+            logger.debug("Finished scanning " + iter.rowsRead() + " rows (estimate was: " + totalRowCount + ")");
             return false;
+        }
+
         currentRow = iter.next();
         return true;
     }
@@ -401,6 +409,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
     {
         private PeekingIterator<Pair<ByteBuffer, SortedMap<ByteBuffer, IColumn>>> wideColumns;
         private ByteBuffer lastColumn = ByteBufferUtil.EMPTY_BYTE_BUFFER;
+        private ByteBuffer lastCountedKey = ByteBufferUtil.EMPTY_BYTE_BUFFER;
 
         private void maybeInit()
         {
@@ -454,10 +463,26 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
             if (rows == null)
                 return endOfData();
 
-            totalRead++;
             Pair<ByteBuffer, SortedMap<ByteBuffer, IColumn>> next = wideColumns.next();
             lastColumn = next.right.values().iterator().next().name();
+
+            maybeIncreaseRowCounter(next);
             return next;
+        }
+
+
+        /**
+         * Increases the row counter only if we really moved to the next row.
+         * @param next just fetched row slice
+         */
+        private void maybeIncreaseRowCounter(Pair<ByteBuffer, SortedMap<ByteBuffer, IColumn>> next)
+        {
+            ByteBuffer currentKey = next.left;
+            if (!currentKey.equals(lastCountedKey))
+            {
+                totalRead++;
+                lastCountedKey = currentKey;
+            }
         }
 
         private class WideColumnIterator extends AbstractIterator<Pair<ByteBuffer, SortedMap<ByteBuffer, IColumn>>>
