@@ -26,9 +26,11 @@ import org.apache.cassandra.cache.ConcurrentLinkedHashCacheProvider;
 public class Config
 {
     public String cluster_name = "Test Cluster";
+
     public String authenticator;
     public String authorizer;
     public String authority; // left for backwards compatibility - will throw a warning.
+    public int permissions_validity_in_ms = 2000;
 
     /* Hashing strategy Random or OPHF */
     public String partitioner;

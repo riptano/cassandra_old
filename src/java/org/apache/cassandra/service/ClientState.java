@@ -19,7 +19,13 @@
 package org.apache.cassandra.service;
 
 import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
+import com.google.common.base.Throwables;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +53,9 @@ public class ClientState
     private static final Set<IResource> READABLE_SYSTEM_RESOURCES = new HashSet<IResource>();
     private static final Set<IResource> PROTECTED_AUTH_RESOURCES = new HashSet<IResource>();
 
+    // Permissions cache.
+    private final LoadingCache<IResource, Set<Permission>> permissionsCache;
+
     static
     {
         // We want these system cfs to be always readable since many tools rely on them (nodetool, cqlsh, bulkloader, etc.)
@@ -67,7 +76,6 @@ public class ClientState
     private volatile AuthenticatedUser user;
     private String keyspace;
     // Reusable array for authorization
-    private final List<Object> resource = new ArrayList<Object>();
     private SemanticVersion cqlVersion = DEFAULT_CQL_VERSION;
 
     // An LRU map of prepared statements
@@ -98,6 +106,8 @@ public class ClientState
     {
         reset();
         this.internalCall = internalCall;
+        // getting permissions can be an expensive op, so authorize() results is important.
+        this.permissionsCache = initializePermissionsCache();
     }
 
     public Map<Integer, CQLStatement> getPrepared()
@@ -162,15 +172,18 @@ public class ClientState
                                                                 user.getName()));
         }
 
-        if (logger.isDebugEnabled())
-            logger.debug("logged in: {}", user);
+        logger.debug("logged in: {}", user);
+
+        // shouldn't inherit old user's permissions in case of relogin.
+        invalidatePermissionsCache();
+
         this.user = user;
     }
 
     public void logout()
     {
-        if (logger.isDebugEnabled())
-            logger.debug("logged out: {}", user);
+        logger.debug("logged out: {}", user);
+        invalidatePermissionsCache();
         reset();
     }
 
@@ -314,8 +327,44 @@ public class ClientState
         return new SemanticVersion[]{ cql, cql3 };
     }
 
+    private LoadingCache<IResource, Set<Permission>> initializePermissionsCache()
+    {
+        if (DatabaseDescriptor.getAuthorizer() instanceof AllowAllAuthorizer)
+            return null;
+
+        int validityPeriod = DatabaseDescriptor.getPermissionsValidity();
+        if (validityPeriod <= 0)
+            return null;
+
+        return CacheBuilder.newBuilder().expireAfterWrite(validityPeriod, TimeUnit.MILLISECONDS)
+                                        .build(new CacheLoader<IResource, Set<Permission>>()
+                                        {
+                                            public Set<Permission> load(IResource resource)
+                                            {
+                                                return DatabaseDescriptor.getAuthorizer().authorize(user, resource);
+                                            }
+                                        });
+    }
+
     public Set<Permission> authorize(IResource resource)
     {
-        return DatabaseDescriptor.getAuthorizer().authorize(user, resource);
+        // AllowAllAuthenticator or manually disabled caching.
+        if (permissionsCache == null)
+            return DatabaseDescriptor.getAuthorizer().authorize(user, resource);
+
+        try
+        {
+            return permissionsCache.get(resource);
+        }
+        catch (ExecutionException e)
+        {
+            throw Throwables.propagate(e);
+        }
+    }
+
+    private void invalidatePermissionsCache()
+    {
+        if (permissionsCache != null)
+            permissionsCache.invalidateAll();
     }
 }
