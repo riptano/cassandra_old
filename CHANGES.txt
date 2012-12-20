@@ -1,3 +1,7 @@
+1.1.8.1
+ * Don't expire columns sooner than they should in 2ndary indexes (CASSANDRA-5079)
+
+
 1.1.8
  * fix temporarily missing schema after upgrade from pre-1.1.5 (CASSANDRA-5061)
  * reduce log spam from invalid counter shards (CASSANDRA-5026)
