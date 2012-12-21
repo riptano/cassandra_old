@@ -20,10 +20,7 @@ package org.apache.cassandra.tools;
 
 import java.io.File;
 import java.io.IOException;
-import java.security.PrivilegedActionException;
 import java.util.*;
-
-import javax.security.auth.login.LoginException;
 
 import org.apache.commons.cli.*;
 
@@ -36,6 +33,7 @@ import org.apache.cassandra.db.compaction.LeveledManifest;
 import org.apache.cassandra.db.compaction.Scrubber;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.service.AbstractCassandraDaemon;
+import org.apache.cassandra.thrift.AuthenticationException;
 import org.apache.cassandra.utils.OutputHandler;
 
 import static org.apache.cassandra.tools.BulkLoader.CmdLineOptions;
@@ -61,12 +59,7 @@ public class StandaloneScrubber
         {
             DatabaseDescriptor.getAuthenticationClient().connect();
         }
-        catch (LoginException e)
-        {
-            e.printStackTrace(System.err);
-            System.exit(1);
-        }
-        catch (PrivilegedActionException e)
+        catch (AuthenticationException e)
         {
             e.printStackTrace(System.err);
             System.exit(1);

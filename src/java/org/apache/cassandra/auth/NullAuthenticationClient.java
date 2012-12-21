@@ -20,19 +20,20 @@ package org.apache.cassandra.auth;
 *
 */
 
-import java.security.PrivilegedActionException;
-
-import javax.security.auth.login.LoginException;
-
 import org.apache.cassandra.config.ConfigurationException;
+import org.apache.cassandra.thrift.AuthenticationException;
 
+/*
+ * An authentication client doesn't connect to authentication server.
+ * It disables the authentication.
+ */
 public class NullAuthenticationClient implements IAuthenticationClient
 {
 
     @Override
-    public void connect() throws LoginException, PrivilegedActionException
+    public void connect()  throws AuthenticationException
     {
-        // pass
+        // pass authentication check
     }
 
     @Override

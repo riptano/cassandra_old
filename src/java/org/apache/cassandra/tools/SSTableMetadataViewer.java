@@ -19,14 +19,12 @@ package org.apache.cassandra.tools;
 
 import java.io.IOException;
 import java.io.PrintStream;
-import java.security.PrivilegedActionException;
-
-import javax.security.auth.login.LoginException;
 
 import org.apache.cassandra.config.ConfigurationException;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableMetadata;
+import org.apache.cassandra.thrift.AuthenticationException;
 
 /**
  * Shows the contents of sstable metadata
@@ -49,12 +47,7 @@ public class SSTableMetadataViewer
         {
             DatabaseDescriptor.getAuthenticationClient().connect();
         }
-        catch (LoginException e)
-        {
-            e.printStackTrace(System.err);
-            System.exit(1);
-        }
-        catch (PrivilegedActionException e)
+        catch (AuthenticationException e)
         {
             e.printStackTrace(System.err);
             System.exit(1);

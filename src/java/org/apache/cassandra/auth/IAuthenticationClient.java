@@ -21,19 +21,34 @@ package org.apache.cassandra.auth;
  *
  */
 
-import java.security.PrivilegedActionException;
-
-import javax.security.auth.login.LoginException;
-
 import org.apache.cassandra.config.ConfigurationException;
+import org.apache.cassandra.thrift.AuthenticationException;
 
-/*
- * A client to be used to connect to security server to authenticate the user
+/**
+ * <p>A client to be used to connect to security server to authenticate the user</p>
+ *
+ * <p>
+ * There are some Cassandra tools, e.g. SSTable related commands which are used off line. They need be authenticated 
+ * to access the related resources. We can use some external authentication server, e.g. Kerberos server or 
+ * LDAP security server. By connecting this client to the security server, we can do the authentication check.
+ * </p>
  * 
+ * <p>
+ * connect method doesn't return anything. It throws @AuthenticationException, which it should be caught at client code as authentication failures.
+ * For the connection session to the server, we need make sure it's short life and it needs be recycled in time to prevent resource leakage. 
+ * </p>
  */
 public interface IAuthenticationClient
 {
-    public void connect() throws LoginException, PrivilegedActionException;
+    /**
+     * Connect to the security server. It throws @AuthenticationException if the connection fails, so you should catch this at your client side code
+     * @throws @AuthenticationException, you can wrap other specific exception as an authentication exception. e.g. LoginException, PrivilegedActionException
+     */
+    public void connect() throws AuthenticationException;
     
+    /**
+     * Validate the configuration
+     * @throws ConfigurationException
+     */
     public void validateConfiguration() throws ConfigurationException;
 }

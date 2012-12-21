@@ -22,10 +22,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.ByteBuffer;
-import java.security.PrivilegedActionException;
 import java.util.*;
-
-import javax.security.auth.login.LoginException;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -38,6 +35,7 @@ import org.apache.commons.cli.*;
 import org.apache.cassandra.config.ConfigurationException;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.thrift.AuthenticationException;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.codehaus.jackson.JsonGenerator;
 import org.codehaus.jackson.map.ObjectMapper;
@@ -398,12 +396,7 @@ public class SSTableExport
         {
             DatabaseDescriptor.getAuthenticationClient().connect();
         }
-        catch (LoginException e)
-        {
-            e.printStackTrace(System.err);
-            System.exit(1);
-        }
-        catch (PrivilegedActionException e)
+        catch (AuthenticationException e)
         {
             e.printStackTrace(System.err);
             System.exit(1);
