@@ -27,6 +27,7 @@ import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.MarshalException;
+import org.apache.cassandra.thrift.AuthenticationException;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.commons.cli.*;
 
@@ -466,6 +467,16 @@ public class SSTableImport
             isSorted = true;
         }
 
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (AuthenticationException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        
         DatabaseDescriptor.loadSchemas();
         if (Schema.instance.getNonSystemTables().size() < 1)
         {

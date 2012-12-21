@@ -35,6 +35,7 @@ import org.apache.commons.cli.*;
 import org.apache.cassandra.config.ConfigurationException;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.thrift.AuthenticationException;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.codehaus.jackson.JsonGenerator;
 import org.codehaus.jackson.map.ObjectMapper;
@@ -391,6 +392,16 @@ public class SSTableExport
         String[] excludes = cmd.getOptionValues(EXCLUDEKEY_OPTION);
         String ssTableFileName = new File(cmd.getArgs()[0]).getAbsolutePath();
 
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (AuthenticationException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        
         DatabaseDescriptor.loadSchemas();
         if (Schema.instance.getNonSystemTables().size() < 1)
         {

@@ -56,6 +56,17 @@ public class BulkLoader
     public static void main(String args[]) throws IOException
     {
         LoaderOptions options = LoaderOptions.parseArgs(args);
+        
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (AuthenticationException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+
         try
         {
             OutputHandler handler = new OutputHandler.SystemOutput(options.verbose, options.debug);

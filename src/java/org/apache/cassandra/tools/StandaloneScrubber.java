@@ -33,6 +33,7 @@ import org.apache.cassandra.db.compaction.LeveledManifest;
 import org.apache.cassandra.db.compaction.Scrubber;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.service.AbstractCassandraDaemon;
+import org.apache.cassandra.thrift.AuthenticationException;
 import org.apache.cassandra.utils.OutputHandler;
 
 import static org.apache.cassandra.tools.BulkLoader.CmdLineOptions;
@@ -53,6 +54,17 @@ public class StandaloneScrubber
     public static void main(String args[]) throws IOException
     {
         Options options = Options.parseArgs(args);
+        
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (AuthenticationException e)
+        {
+            e.printStackTrace(System.err);
+            System.exit(1);
+        }
+        
         try
         {
             // load keyspace descriptions.

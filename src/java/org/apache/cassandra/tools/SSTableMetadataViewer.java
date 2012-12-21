@@ -21,8 +21,10 @@ import java.io.IOException;
 import java.io.PrintStream;
 
 import org.apache.cassandra.config.ConfigurationException;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableMetadata;
+import org.apache.cassandra.thrift.AuthenticationException;
 
 /**
  * Shows the contents of sstable metadata
@@ -38,6 +40,16 @@ public class SSTableMetadataViewer
         if (args.length == 0)
         {
             out.println("Usage: sstablemetadata <sstable filenames>");
+            System.exit(1);
+        }
+        
+        try
+        {
+            DatabaseDescriptor.getAuthenticationClient().connect();
+        }
+        catch (AuthenticationException e)
+        {
+            e.printStackTrace(System.err);
             System.exit(1);
         }
 
