@@ -24,11 +24,7 @@ package org.apache.cassandra.hadoop;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Random;
-import java.util.SortedMap;
+import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,14 +32,12 @@ import java.util.concurrent.Future;
 
 import com.google.common.collect.ImmutableList;
 
+import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.db.IColumn;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
-import org.apache.cassandra.thrift.Cassandra;
-import org.apache.cassandra.thrift.InvalidRequestException;
-import org.apache.cassandra.thrift.KeyRange;
-import org.apache.cassandra.thrift.TokenRange;
+import org.apache.cassandra.thrift.*;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapred.*;
@@ -54,6 +48,7 @@ import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.thrift.TException;
+import org.apache.thrift.transport.TTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,6 +100,27 @@ public class ColumnFamilyInputFormat extends InputFormat<ByteBuffer, SortedMap<B
             throw new UnsupportedOperationException("You must set the initial output address to a Cassandra node");
         if (ConfigHelper.getInputPartitioner(conf) == null)
             throw new UnsupportedOperationException("You must set the Cassandra partitioner class");
+    }
+
+    public static ClientHolder createAuthenticatedClient(String location, int port, Configuration conf) throws Exception
+    {
+        logger.debug("Creating authenticated client for CF input format");
+        TTransport transport = ConfigHelper.getClientTransportFactory(conf).openTransport(location, port);
+        TBinaryProtocol binaryProtocol = new TBinaryProtocol(transport);
+        Cassandra.Client client = new Cassandra.Client(binaryProtocol);
+
+        // log in
+        client.set_keyspace(ConfigHelper.getInputKeyspace(conf));
+        if (ConfigHelper.getInputKeyspaceUserName(conf) != null)
+        {
+            Map<String, String> creds = new HashMap<String, String>();
+            creds.put(IAuthenticator.USERNAME_KEY, ConfigHelper.getInputKeyspaceUserName(conf));
+            creds.put(IAuthenticator.PASSWORD_KEY, ConfigHelper.getInputKeyspacePassword(conf));
+            AuthenticationRequest authRequest = new AuthenticationRequest(creds);
+            client.login(authRequest);
+        }
+        logger.debug("Authenticated client for CF input format created successfully");
+        return new ClientHolder(client, transport);
     }
 
     public List<InputSplit> getSplits(JobContext context) throws IOException

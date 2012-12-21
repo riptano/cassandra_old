@@ -89,7 +89,8 @@ public class NetworkTopologyStrategy extends AbstractReplicationStrategy
             Set<Pair<Token, InetAddress>> dcTokensToUpdate = new HashSet<Pair<Token, InetAddress>>();
             for (Entry<Token, InetAddress> tokenEntry : tokenMetadata.getTokenToEndpointMapForReading().entrySet())
             {
-                if (snitch.getDatacenter(tokenEntry.getValue()).equals(dcName))
+                // Case insensitive comparison, see: DSP-1204 ^SB 
+                if (snitch.getDatacenter(tokenEntry.getValue()).equalsIgnoreCase(dcName))
                     dcTokensToUpdate.add(Pair.create(tokenEntry.getKey(), tokenEntry.getValue()));
             }
             TokenMetadata dcTokens = new TokenMetadata();
