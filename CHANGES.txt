@@ -1,6 +1,7 @@
 1.1.5.1
  * Add ability to use custom TServerFactory implementations (CASSANDRA-4608)
  * Pluggable Thrift transport factories for CLI (CASSANDRA-4609)
+ * reduce log spam from invalid counter shards (CASSANDRA-5026)
 
 1.1.8
  * Fall back to old describe_splits if d_s_ex is not available (CASSANDRA-4803)
