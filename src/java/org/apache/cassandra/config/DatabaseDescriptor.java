@@ -72,7 +72,6 @@ public class DatabaseDescriptor
 
     private static IAuthenticator authenticator = new AllowAllAuthenticator();
     private static IAuthority authority = new AllowAllAuthority();
-    private static IAuthorityContainer authorityContainer;
 
     private final static String DEFAULT_CONFIGURATION = "cassandra.yaml";
 
@@ -203,8 +202,6 @@ public class DatabaseDescriptor
                 authority = FBUtilities.<IAuthority>construct(conf.authority, "authority");
             authenticator.validateConfiguration();
             authority.validateConfiguration();
-
-            authorityContainer = new IAuthorityContainer(authority);
 
             /* Hashing strategy */
             if (conf.partitioner == null)
@@ -370,7 +367,7 @@ public class DatabaseDescriptor
             }
 
             if (conf.concurrent_compactors == null)
-                conf.concurrent_compactors = Runtime.getRuntime().availableProcessors();
+                conf.concurrent_compactors = FBUtilities.getAvailableProcessors();
 
             if (conf.concurrent_compactors <= 0)
                 throw new ConfigurationException("concurrent_compactors should be strictly greater than 0");
@@ -383,11 +380,11 @@ public class DatabaseDescriptor
 
             if (conf.rpc_min_threads == null)
                 conf.rpc_min_threads = conf.rpc_server_type.toLowerCase().equals("hsha")
-                                     ? Runtime.getRuntime().availableProcessors() * 4
+                                     ? FBUtilities.getAvailableProcessors() * 4
                                      : 16;
             if (conf.rpc_max_threads == null)
                 conf.rpc_max_threads = conf.rpc_server_type.toLowerCase().equals("hsha")
-                                     ? Runtime.getRuntime().availableProcessors() * 4
+                                     ? FBUtilities.getAvailableProcessors() * 4
                                      : Integer.MAX_VALUE;
 
             /* data file and commit log directories. they get created later, when they're needed. */
@@ -449,9 +446,6 @@ public class DatabaseDescriptor
             Schema.instance.load(CFMetaData.SchemaColumnsCf);
 
             Schema.instance.addSystemTable(systemMeta);
-
-            // setup schema required for authorization
-            authorityContainer.setup();
 
             /* Load the seeds for node contact points */
             if (conf.seed_provider == null)
@@ -574,11 +568,6 @@ public class DatabaseDescriptor
     public static IAuthority getAuthority()
     {
         return authority;
-    }
-
-    public static IAuthorityContainer getAuthorityContainer()
-    {
-        return authorityContainer;
     }
 
     public static int getThriftMaxMessageLength()

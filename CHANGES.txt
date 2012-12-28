@@ -1,11 +1,19 @@
-1.1.5.1
- * Add ability to use custom TServerFactory implementations (CASSANDRA-4608)
- * Pluggable Thrift transport factories for CLI (CASSANDRA-4609)
-
 1.1.8
+ * fix temporarily missing schema after upgrade from pre-1.1.5 (CASSANDRA-5061)
+ * reduce log spam from invalid counter shards (CASSANDRA-5026)
+ * Improve schema propagation performance (CASSANDRA-5025)
  * Fall back to old describe_splits if d_s_ex is not available (CASSANDRA-4803)
+ * Improve error reporting when streaming ranges fail (CASSANDRA-5009)
+ * cqlsh: fix timestamp formatting on some platforms (CASSANDRA-5046)
+ * Fix ALTER TABLE overriding compression options with defaults (CASSANDRA-4996, 5066)
+ * Avoid error opening data file on startup (CASSANDRA-4984)
+ * Fix wrong index_options in cli 'show schema' (CASSANDRA-5008)
+ * Allow overriding number of available processor (CASSANDRA-4790)
 
 1.1.7
+ * cqlsh: improve COPY FROM performance (CASSANDRA-4921)
+ * add basic authentication support for Pig CassandraStorage (CASSANDRA-3042)
+ * fix CQL2 ALTER TABLE compaction_strategy_class altering (CASSANDRA-4965)
  * reset getRangeSlice filter after finishing a row for get_paged_slice
    (CASSANDRA-4919)
  * expunge row cache post-truncate (CASSANDRA-4940)
@@ -13,7 +21,25 @@
  * add get[Row|Key]CacheEntries to CacheServiceMBean (CASSANDRA-4859)
  * fix get_paged_slice to wrap to next row correctly (CASSANDRA-4816)
  * fix indexing empty column values (CASSANDRA-4832)
+ * allow JdbcDate to compose null Date objects (CASSANDRA-4830)
+ * fix possible stackoverflow when compacting 1000s of sstables
+   (CASSANDRA-4765)
+ * fix wrong leveled compaction progress calculation (CASSANDRA-4807)
+ * add a close() method to CRAR to prevent leaking file descriptors (CASSANDRA-4820)
+ * fix potential infinite loop in get_count (CASSANDRA-4833)
+ * fix compositeType.{get/from}String methods (CASSANDRA-4842)
  * (CQL) fix CREATE COLUMNFAMILY permissions check (CASSANDRA-4864)
+ * Fix DynamicCompositeType same type comparison (CASSANDRA-4711)
+ * Fix duplicate SSTable reference when stream session failed (CASSANDRA-3306)
+ * Allow static CF definition with compact storage (CASSANDRA-4910)
+ * Fix endless loop/compaction of schema_* CFs due to broken timestamps (CASSANDRA-4880)
+ * Fix 'wrong class type' assertion in CounterColumn (CASSANDRA-4976)
+ * Fix cqlsh timestamp formatting of timezone info (CASSANDRA-4746)
+ * Fix assertion failure with leveled compaction (CASSANDRA-4799)
+ * Check for null end_token in get_range_slice (CASSANDRA-4804)
+ * Remove all remnants of removed nodes (CASSANDRA-4840)
+ * Add aut-reloading of the log4j file in debian package (CASSANDRA-4855)
+ * Fix estimated row cache entry size (CASSANDRA-4860)
 
 1.1.6
  * Wait for writes on synchronous read digest mismatch (CASSANDRA-4792)
@@ -54,6 +80,12 @@ Merged from 1.0:
  * Switch from NBHM to CHM in MessagingService's callback map, which
    prevents OOM in long-running instances (CASSANDRA-4708)
 
+
+1.1.5.1
+ * Add ability to use custom TServerFactory implementations (CASSANDRA-4608)
+ * Pluggable Thrift transport factories for CLI (CASSANDRA-4609)
+
+
 1.1.5
  * add SecondaryIndex.reload API (CASSANDRA-4581)
  * use millis + atomicint for commitlog segment creation instead of
@@ -91,6 +123,7 @@ Merged from 1.0:
 
 
 1.1.3
+ * (cqlsh) add COPY TO (CASSANDRA-4434)
  * munmap commitlog segments before rename (CASSANDRA-4337)
  * (JMX) rename getRangeKeySample to sampleKeyRange to avoid returning
    multi-MB results as an attribute (CASSANDRA-4452)
@@ -432,7 +465,7 @@ Merged from 0.8:
  * Add SnapshotCommand to trigger snapshot on remote node (CASSANDRA-3721)
  * Make CFMetaData conversions to/from thrift/native schema inverses
    (CASSANDRA_3559)
- * Add initial code for CQL 3.0-beta (CASSANDRA-3781, 3753)
+ * Add initial code for CQL 3.0-beta (CASSANDRA-2474, 3781, 3753)
  * Add wide row support for ColumnFamilyInputFormat (CASSANDRA-3264)
  * Allow extending CompositeType comparator (CASSANDRA-3657)
  * Avoids over-paging during get_count (CASSANDRA-3798)

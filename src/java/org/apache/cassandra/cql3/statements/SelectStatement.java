@@ -115,7 +115,7 @@ public class SelectStatement implements CQLStatement
 
     public void checkAccess(ClientState state) throws InvalidRequestException
     {
-        state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.SELECT);
+        state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.READ);
     }
 
     public void validate(ClientState state) throws InvalidRequestException
@@ -1045,6 +1045,8 @@ public class SelectStatement implements CQLStatement
                 }
             }
 
+            boolean keyIsInRelation = stmt.keyRestriction != null && stmt.keyRestriction.isEquality() && stmt.keyRestriction.eqValues.size() > 1;
+
             /*
              * At this point, the select statement if fully constructed, but we still have a few things to validate
              */
@@ -1115,11 +1117,16 @@ public class SelectStatement implements CQLStatement
 
             if (!stmt.parameters.orderings.isEmpty())
             {
+                if (!stmt.metadataRestrictions.isEmpty())
+                    throw new InvalidRequestException("ORDER BY with 2ndary indexes is not supported.");
+
                 if (stmt.isKeyRange())
                     throw new InvalidRequestException("ORDER BY is only supported when the partition key is restricted by an EQ or an IN.");
 
-                // check if we are trying to order by column that wouldn't be included in the results
-                if (!stmt.selectedNames.isEmpty()) // empty means wildcard was used
+                // If we order an IN query, we'll have to do a manual sort post-query. Currently, this sorting requires that we
+                // have queried the column on which we sort (TODO: we should update it to add the column on which we sort to the one
+                // queried automatically, and then removing it from the resultSet afterwards if needed)
+                if (keyIsInRelation && !stmt.selectedNames.isEmpty()) // empty means wildcard was used
                 {
                     for (ColumnIdentifier column : stmt.parameters.orderings.keySet())
                     {

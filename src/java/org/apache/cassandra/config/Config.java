@@ -20,7 +20,8 @@ package org.apache.cassandra.config;
  *
  */
 
-import org.apache.cassandra.cache.ConcurrentLinkedHashCacheProvider;
+import org.apache.cassandra.cache.SerializingCacheProvider;
+import org.apache.cassandra.utils.FBUtilities;
 
 
 public class Config
@@ -83,7 +84,7 @@ public class Config
     /* if the size of columns or super-columns are more than this, indexing will kick in */
     public Integer column_index_size_in_kb = 64;
     public Integer in_memory_compaction_limit_in_mb = 64;
-    public Integer concurrent_compactors = Runtime.getRuntime().availableProcessors();
+    public Integer concurrent_compactors = FBUtilities.getAvailableProcessors();
     public Integer compaction_throughput_mb_per_sec = 16;
     public Boolean multithreaded_compaction = false;
 
@@ -135,7 +136,7 @@ public class Config
     public long row_cache_size_in_mb = 0;
     public int row_cache_save_period = 0;
     public int row_cache_keys_to_save = Integer.MAX_VALUE;
-    public String row_cache_provider = ConcurrentLinkedHashCacheProvider.class.getSimpleName();
+    public String row_cache_provider = SerializingCacheProvider.class.getSimpleName();
     public boolean populate_io_cache_on_flush = false;
 
     private static boolean loadYaml = true;

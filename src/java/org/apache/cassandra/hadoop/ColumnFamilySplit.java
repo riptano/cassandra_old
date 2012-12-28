@@ -100,6 +100,7 @@ public class ColumnFamilySplit extends InputSplit implements Writable, org.apach
         {
             dataNodes[i] = in.readUTF();
         }
+        length = Long.MAX_VALUE;
     }
 
     @Override

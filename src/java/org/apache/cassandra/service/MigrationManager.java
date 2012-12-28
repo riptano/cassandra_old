@@ -31,6 +31,10 @@ import java.util.concurrent.Future;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +68,10 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
     private static final int MIGRATION_REQUEST_RETRIES = 3;
     private static final ByteBuffer LAST_MIGRATION_KEY = ByteBufferUtil.bytes("Last Migration");
 
+    private static final RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMXBean();
+
+    public static final int MIGRATION_DELAY_IN_MS = 60000;
+
     public void onJoin(InetAddress endpoint, EndpointState epState)
     {}
 
@@ -72,7 +80,7 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
         if (state != ApplicationState.SCHEMA || endpoint.equals(FBUtilities.getBroadcastAddress()))
             return;
 
-        rectifySchema(UUID.fromString(value.value), endpoint);
+        maybeScheduleSchemaPull(UUID.fromString(value.value), endpoint);
     }
 
     public void onAlive(InetAddress endpoint, EndpointState state)
@@ -80,7 +88,7 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
         VersionedValue value = state.getApplicationState(ApplicationState.SCHEMA);
 
         if (value != null)
-            rectifySchema(UUID.fromString(value.value), endpoint);
+            maybeScheduleSchemaPull(UUID.fromString(value.value), endpoint);
     }
 
     public void onDead(InetAddress endpoint, EndpointState state)
@@ -92,19 +100,48 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
     public void onRemove(InetAddress endpoint)
     {}
 
-    private static void rectifySchema(UUID theirVersion, final InetAddress endpoint)
+    /**
+     * If versions differ this node sends request with local migration list to the endpoint
+     * and expecting to receive a list of migrations to apply locally.
+     */
+    private static void maybeScheduleSchemaPull(final UUID theirVersion, final InetAddress endpoint)
     {
-        // Can't request migrations from nodes with versions younger than 1.1
-        if (Gossiper.instance.getVersion(endpoint) < MessagingService.VERSION_11)
+        // Can't request migrations from nodes with versions younger than 1.1.7
+        if (Gossiper.instance.getVersion(endpoint) < MessagingService.VERSION_117)
             return;
 
         if (Schema.instance.getVersion().equals(theirVersion))
             return;
 
-        /**
-         * if versions differ this node sends request with local migration list to the endpoint
-         * and expecting to receive a list of migrations to apply locally.
-         *
+        if (Schema.emptyVersion.equals(Schema.instance.getVersion()) || runtimeMXBean.getUptime() < MIGRATION_DELAY_IN_MS)
+        {
+            // If we think we may be bootstrapping or have recently started, submit MigrationTask immediately
+            submitMigrationTask(endpoint);
+        }
+        else
+        {
+            // Include a delay to make sure we have a chance to apply any changes being
+            // pushed out simultaneously. See CASSANDRA-5025
+            Runnable runnable = new Runnable()
+            {
+                public void run()
+                {
+                    // grab the latest version of the schema since it may have changed again since the initial scheduling
+                    VersionedValue value = Gossiper.instance.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.SCHEMA);
+                    UUID currentVersion = UUID.fromString(value.value);
+                    if (Schema.instance.getVersion().equals(currentVersion))
+                        return;
+
+                    submitMigrationTask(endpoint);
+                }
+            };
+            StorageService.optionalTasks.schedule(runnable, MIGRATION_DELAY_IN_MS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private static void submitMigrationTask(InetAddress endpoint)
+    {
+        /*
          * Do not de-ref the future because that causes distributed deadlock (CASSANDRA-3832) because we are
          * running in the gossip stage.
          */
@@ -210,12 +247,11 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
     // Returns a future on the local application of the schema
     private static Future<?> announce(final Collection<RowMutation> schema)
     {
-        Future<?> f = StageManager.getStage(Stage.MIGRATION).submit(new Callable<Object>()
+        Future<?> f = StageManager.getStage(Stage.MIGRATION).submit(new WrappedRunnable()
         {
-            public Object call() throws Exception
+            protected void runMayThrow() throws IOException, ConfigurationException
             {
                 DefsTable.mergeSchema(schema);
-                return null;
             }
         });
 
@@ -304,7 +340,7 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
         int count = in.readInt();
 
         for (int i = 0; i < count; i++)
-            schema.add(RowMutation.serializer().deserializeFixingTimestamps(in, version));
+            schema.add(RowMutation.serializer().deserialize(in, version));
 
         return schema;
     }
@@ -341,11 +377,12 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
             liveEndpoints.remove(FBUtilities.getBroadcastAddress());
 
             // force migration is there are nodes around, first of all
-            // check if there are nodes with versions >= 1.1 to request migrations from,
+            // check if there are nodes with versions >= 1.1.7 to request migrations from,
             // because migration format of the nodes with versions < 1.1 is incompatible with older versions
+            // and due to broken timestamps in versions prior to 1.1.7
             for (InetAddress node : liveEndpoints)
             {
-                if (Gossiper.instance.getVersion(node) >= MessagingService.VERSION_11)
+                if (Gossiper.instance.getVersion(node) >= MessagingService.VERSION_117)
                 {
                     if (logger.isDebugEnabled())
                         logger.debug("Requesting schema from " + node);

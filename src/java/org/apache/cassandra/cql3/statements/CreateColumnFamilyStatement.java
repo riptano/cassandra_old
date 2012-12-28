@@ -24,11 +24,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.cassandra.auth.Permission;
-import org.apache.commons.lang.StringUtils;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.Multiset;
+import org.apache.commons.lang.StringUtils;
 
+import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.config.CFMetaData;
@@ -44,7 +44,6 @@ import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.thrift.CqlResult;
 import org.apache.cassandra.thrift.InvalidRequestException;
 import org.apache.cassandra.io.compress.CompressionParameters;
-import org.apache.cassandra.utils.Pair;
 
 /** A <code>CREATE COLUMNFAMILY</code> parsed from a CQL query statement. */
 public class CreateColumnFamilyStatement extends SchemaAlteringStatement
@@ -64,11 +63,13 @@ public class CreateColumnFamilyStatement extends SchemaAlteringStatement
     {
         super(name);
         this.properties = properties;
+        if (CFMetaData.DEFAULT_COMPRESSOR != null && this.properties.compressionParameters.isEmpty())
+            this.properties.compressionParameters.put(CompressionParameters.SSTABLE_COMPRESSION, CFMetaData.DEFAULT_COMPRESSOR);
     }
 
     public void checkAccess(ClientState state) throws InvalidRequestException
     {
-        state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.CREATE);
+        state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.WRITE);
     }
 
     // Column definitions
@@ -222,11 +223,8 @@ public class CreateColumnFamilyStatement extends SchemaAlteringStatement
                     stmt.comparator = CFDefinition.definitionType;
                 }
 
-                if (useCompactStorage)
+                if (useCompactStorage && !stmt.columnAliases.isEmpty())
                 {
-                    // There should at least have been one column alias
-                    if (stmt.columnAliases.isEmpty())
-                        throw new InvalidRequestException("COMPACT STORAGE requires at least one column part of the clustering key, none found");
                     // There should be only one column definition remaining, which gives us the default validator.
                     if (stmt.columns.isEmpty())
                         throw new InvalidRequestException("COMPACT STORAGE requires one definition not part of the PRIMARY KEY, none found");

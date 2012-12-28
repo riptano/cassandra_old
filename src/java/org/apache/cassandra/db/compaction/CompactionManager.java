@@ -19,7 +19,6 @@
 package org.apache.cassandra.db.compaction;
 
 import java.io.File;
-import java.io.IOError;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.nio.ByteBuffer;
@@ -32,6 +31,7 @@ import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
 import org.apache.cassandra.cache.AutoSavingCache;
+import org.apache.cassandra.cache.RowCacheKey;
 import org.apache.cassandra.concurrent.DebuggableThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.CFMetaData;
@@ -46,8 +46,8 @@ import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.service.AntiEntropyService;
+import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.*;
 import org.slf4j.Logger;
@@ -74,6 +74,16 @@ public class CompactionManager implements CompactionManagerMBean
 
     public static final int NO_GC = Integer.MIN_VALUE;
     public static final int GC_ALL = Integer.MAX_VALUE;
+
+    // A thread local that tells us if the current thread is owned by the compaction manager. Used
+    // by CounterContext to figure out if it should log a warning for invalid counter shards.
+    public static final ThreadLocal<Boolean> isCompactionManager = new ThreadLocal<Boolean>() {
+        @Override
+        protected Boolean initialValue()
+        {
+            return false;
+        }
+    };
 
     /**
      * compactionLock has two purposes:
@@ -813,6 +823,12 @@ public class CompactionManager implements CompactionManagerMBean
 
                     for (SecondaryIndex index : main.indexManager.getIndexes())
                         index.truncate(truncatedAt);
+
+                    for (RowCacheKey key : CacheService.instance.rowCache.getKeySet())
+                    {
+                        if (key.cfId == main.metadata.cfId)
+                            CacheService.instance.rowCache.remove(key);
+                    }
                 }
                 finally
                 {
@@ -921,6 +937,13 @@ public class CompactionManager implements CompactionManagerMBean
         public long getTotalCompactionsCompleted()
         {
             return totalCompactionsCompleted;
+        }
+
+        protected void beforeExecute(Thread t, Runnable r)
+        {
+            // can't set this in Thread factory, so we do it redundantly here
+            isCompactionManager.set(true);
+            super.beforeExecute(t, r);
         }
 
         // modified from DebuggableThreadPoolExecutor so that CompactionInterruptedExceptions are not logged

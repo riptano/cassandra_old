@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.collect.*;
 import org.slf4j.Logger;
@@ -47,7 +48,8 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
 {
     private static final Logger logger = LoggerFactory.getLogger(LeveledCompactionStrategy.class);
 
-    private final LeveledManifest manifest;
+    @VisibleForTesting
+    final LeveledManifest manifest;
     private final String SSTABLE_SIZE_OPTION = "sstable_size_in_mb";
     private final int maxSSTableSizeInMB;
     private final AtomicReference<LeveledCompactionTask> task = new AtomicReference<LeveledCompactionTask>();
@@ -181,7 +183,9 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
         List<ICompactionScanner> scanners = new ArrayList<ICompactionScanner>(sstables.size());
         for (Integer level : byLevel.keySet())
         {
-            if (level == 0)
+            // level can be -1 when sstables are added to DataTracker but not to LeveledManifest
+            // since we don't know which level those sstable belong yet, we simply do the same as L0 sstables.
+            if (level <= 0)
             {
                 // L0 makes no guarantees about overlapping-ness.  Just create a direct scanner for each
                 for (SSTableReader sstable : byLevel.get(level))
@@ -235,7 +239,11 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy implem
                     positionOffset += currentScanner.getLengthInBytes();
                     currentScanner.close();
                     if (!sstableIterator.hasNext())
+                    {
+                        // reset to null so getCurrentPosition does not return wrong value
+                        currentScanner = null;
                         return endOfData();
+                    }
                     currentScanner = sstableIterator.next().getDirectScanner(range);
                 }
             }

@@ -162,8 +162,8 @@ public class SSTableReader extends SSTable
     {
         assert partitioner != null;
         // Minimum components without which we can't do anything
-        assert components.contains(Component.DATA);
-        assert components.contains(Component.PRIMARY_INDEX);
+        assert components.contains(Component.DATA) : "Data component is missing for sstable" + descriptor;
+        assert components.contains(Component.PRIMARY_INDEX) : "Primary index component is missing for sstable " + descriptor;
 
         long start = System.currentTimeMillis();
         logger.info("Opening {} ({} bytes)", descriptor, new File(descriptor.filenameFor(COMPONENT_DATA)).length());
@@ -229,7 +229,7 @@ public class SSTableReader extends SSTable
     {
         final Collection<SSTableReader> sstables = new LinkedBlockingQueue<SSTableReader>();
 
-        ExecutorService executor = DebuggableThreadPoolExecutor.createWithFixedPoolSize("SSTableBatchOpen", Runtime.getRuntime().availableProcessors());
+        ExecutorService executor = DebuggableThreadPoolExecutor.createWithFixedPoolSize("SSTableBatchOpen", FBUtilities.getAvailableProcessors());
         for (final Map.Entry<Descriptor, Set<Component>> entry : entries)
         {
             Runnable runnable = new Runnable()
