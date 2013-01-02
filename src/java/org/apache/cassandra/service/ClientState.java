@@ -38,6 +38,7 @@ import org.apache.cassandra.db.SystemTable;
 import org.apache.cassandra.db.Table;
 import org.apache.cassandra.thrift.AuthenticationException;
 import org.apache.cassandra.thrift.InvalidRequestException;
+import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.SemanticVersion;
 
 /**
@@ -54,7 +55,7 @@ public class ClientState
     private static final Set<IResource> PROTECTED_AUTH_RESOURCES = new HashSet<IResource>();
 
     // Permissions cache.
-    private final LoadingCache<IResource, Set<Permission>> permissionsCache;
+    private static final LoadingCache<Pair<AuthenticatedUser, IResource>, Set<Permission>> permissionsCache;
 
     static
     {
@@ -70,6 +71,8 @@ public class ClientState
 
         PROTECTED_AUTH_RESOURCES.addAll(DatabaseDescriptor.getAuthenticator().protectedResources());
         PROTECTED_AUTH_RESOURCES.addAll(DatabaseDescriptor.getAuthorizer().protectedResources());
+
+        permissionsCache = initializePermissionsCache();
     }
 
     // Current user for the session
@@ -106,8 +109,6 @@ public class ClientState
     {
         reset();
         this.internalCall = internalCall;
-        // getting permissions can be an expensive op, so authorize() results is important.
-        this.permissionsCache = initializePermissionsCache();
     }
 
     public Map<Integer, CQLStatement> getPrepared()
@@ -174,16 +175,12 @@ public class ClientState
 
         logger.debug("logged in: {}", user);
 
-        // shouldn't inherit old user's permissions in case of relogin.
-        invalidatePermissionsCache();
-
         this.user = user;
     }
 
     public void logout()
     {
         logger.debug("logged out: {}", user);
-        invalidatePermissionsCache();
         reset();
     }
 
@@ -327,7 +324,7 @@ public class ClientState
         return new SemanticVersion[]{ cql, cql3 };
     }
 
-    private LoadingCache<IResource, Set<Permission>> initializePermissionsCache()
+    private static LoadingCache<Pair<AuthenticatedUser, IResource>, Set<Permission>> initializePermissionsCache()
     {
         if (DatabaseDescriptor.getAuthorizer() instanceof AllowAllAuthorizer)
             return null;
@@ -337,11 +334,12 @@ public class ClientState
             return null;
 
         return CacheBuilder.newBuilder().expireAfterWrite(validityPeriod, TimeUnit.MILLISECONDS)
-                                        .build(new CacheLoader<IResource, Set<Permission>>()
+                                        .build(new CacheLoader<Pair<AuthenticatedUser, IResource>, Set<Permission>>()
                                         {
-                                            public Set<Permission> load(IResource resource)
+                                            public Set<Permission> load(Pair<AuthenticatedUser, IResource> userResource)
                                             {
-                                                return DatabaseDescriptor.getAuthorizer().authorize(user, resource);
+                                                return DatabaseDescriptor.getAuthorizer().authorize(userResource.left,
+                                                                                                    userResource.right);
                                             }
                                         });
     }
@@ -354,17 +352,11 @@ public class ClientState
 
         try
         {
-            return permissionsCache.get(resource);
+            return permissionsCache.get(Pair.create(user, resource));
         }
         catch (ExecutionException e)
         {
             throw Throwables.propagate(e);
         }
-    }
-
-    private void invalidatePermissionsCache()
-    {
-        if (permissionsCache != null)
-            permissionsCache.invalidateAll();
     }
 }
