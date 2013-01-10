@@ -33,6 +33,7 @@ import org.apache.commons.lang.builder.ToStringBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.auth.Auth;
 import org.apache.cassandra.cql3.CFDefinition;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -43,7 +44,6 @@ import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.io.IColumnSerializer;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.io.compress.SnappyCompressor;
-import org.apache.cassandra.thrift.CfDef;
 import org.apache.cassandra.thrift.IndexType;
 import org.apache.cassandra.thrift.InvalidRequestException;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -99,6 +99,7 @@ public final class CFMetaData
     public static final CFMetaData SchemaKeyspacesCf;
     public static final CFMetaData SchemaColumnFamiliesCf;
     public static final CFMetaData SchemaColumnsCf;
+    public static final CFMetaData AuthUsersCf;
     static
     {
         SchemaKeyspacesCf = newSchemaMetadata(SystemTable.SCHEMA_KEYSPACES_CF,
@@ -158,6 +159,17 @@ public final class CFMetaData
                                           ColumnDefinition.ascii("index_options", 2),
                                           ColumnDefinition.ascii("index_name", 2),
                                           ColumnDefinition.ascii("component_index", 2));
+
+        AuthUsersCf = newSystemMetadata(Auth.AUTH_KS,
+                                        Auth.USERS_CF,
+                                        19,
+                                        "known users and their superuser status",
+                                        UTF8Type.instance,
+                                        null)
+                      .keyValidator(UTF8Type.instance)
+                      .keyAlias("name")
+                      .gcGraceSeconds(864000)
+                      .columnMetadata(ColumnDefinition.bool("super", null));
     }
 
     public enum Caching
@@ -305,15 +317,20 @@ public final class CFMetaData
         updateCfDef(); // init cqlCfDef
     }
 
-    private static CFMetaData newSystemMetadata(String cfName, int cfId, String comment, AbstractType<?> comparator, AbstractType<?> subcc)
+    private static CFMetaData newSystemMetadata(String keyspace, String cfName, int cfId, String comment, AbstractType<?> comparator, AbstractType<?> subcc)
     {
         ColumnFamilyType type = subcc == null ? ColumnFamilyType.Standard : ColumnFamilyType.Super;
-        CFMetaData newCFMD = new CFMetaData(Table.SYSTEM_TABLE, cfName, type, comparator,  subcc, cfId);
+        CFMetaData newCFMD = new CFMetaData(keyspace, cfName, type, comparator,  subcc, cfId);
 
         return newCFMD.comment(comment)
                       .readRepairChance(0)
                       .dcLocalReadRepairChance(0)
                       .gcGraceSeconds(0);
+    }
+
+    private static CFMetaData newSystemMetadata(String cfName, int cfId, String comment, AbstractType<?> comparator, AbstractType<?> subcc)
+    {
+        return newSystemMetadata(Table.SYSTEM_TABLE, cfName, cfId, comment, comparator, subcc);
     }
 
     private static CFMetaData newSchemaMetadata(String cfName, int cfId, String comment, AbstractType<?> comparator, AbstractType<?> subcc)

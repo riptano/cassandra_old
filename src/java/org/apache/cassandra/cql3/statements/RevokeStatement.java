@@ -1,6 +1,4 @@
-package org.apache.cassandra.auth;
-/*
- *
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,23 +15,30 @@ package org.apache.cassandra.auth;
  * KIND, either express or implied.  See the License for the
  * specific language governing permissions and limitations
  * under the License.
- *
  */
+package org.apache.cassandra.cql3.statements;
 
-import java.util.EnumSet;
+import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.Set;
 
-import org.apache.cassandra.config.ConfigurationException;
+import org.apache.cassandra.auth.IResource;
+import org.apache.cassandra.auth.Permission;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.thrift.CqlResult;
+import org.apache.cassandra.thrift.InvalidRequestException;
 
-public class AllowAllAuthority implements IAuthority
+public class RevokeStatement extends PermissionAlteringStatement
 {
-    public EnumSet<Permission> authorize(AuthenticatedUser user, List<Object> resource)
+    public RevokeStatement(Set<Permission> permissions, IResource resource, String username)
     {
-        return Permission.ALL;
+        super(permissions, resource, username);
     }
 
-    public void validateConfiguration() throws ConfigurationException
+    public CqlResult execute(ClientState state, List<ByteBuffer> variables) throws InvalidRequestException
     {
-        // pass
+        DatabaseDescriptor.getAuthorizer().revoke(state.getUser(), permissions, resource, username);
+        return null;
     }
 }

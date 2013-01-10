@@ -38,7 +38,7 @@ public class DropKeyspaceStatement extends SchemaAlteringStatement
 
     public void checkAccess(ClientState state) throws InvalidRequestException
     {
-        state.hasKeyspaceAccess(keyspace, Permission.WRITE);
+        state.hasKeyspaceAccess(keyspace, Permission.DROP);
     }
 
     @Override

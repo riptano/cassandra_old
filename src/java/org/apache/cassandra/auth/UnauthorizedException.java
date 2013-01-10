@@ -20,9 +20,9 @@ package org.apache.cassandra.auth;
 
 import org.apache.cassandra.thrift.InvalidRequestException;
 
-public class PermissionDenied extends InvalidRequestException
+public class UnauthorizedException extends InvalidRequestException
 {
-    public PermissionDenied(String reason)
+    public UnauthorizedException(String reason)
     {
         super(reason);
     }

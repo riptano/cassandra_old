@@ -34,14 +34,12 @@ import javax.management.ObjectName;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.*;
-
-import org.apache.cassandra.metrics.ClientRequestMetrics;
-
 import org.apache.log4j.Level;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.auth.Auth;
 import org.apache.cassandra.concurrent.DebuggableScheduledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
@@ -59,6 +57,7 @@ import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.locator.DynamicEndpointSnitch;
 import org.apache.cassandra.locator.IEndpointSnitch;
 import org.apache.cassandra.locator.TokenMetadata;
+import org.apache.cassandra.metrics.ClientRequestMetrics;
 import org.apache.cassandra.net.IAsyncResult;
 import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.MessagingService;
@@ -688,6 +687,9 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
                 Gossiper.instance.replacedEndpoint(current);
             logger_.info("Bootstrap/Replace/Move completed! Now serving reads.");
             assert tokenMetadata_.sortedTokens().size() > 0;
+
+            // setup default superuser (if needed).
+            Auth.setupSuperuser();
         }
         else
         {
@@ -709,6 +711,9 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
             isSurveyMode = false;
             logger_.info("Leaving write survey mode and joining ring at operator request");
             assert tokenMetadata_.sortedTokens().size() > 0;
+
+            // setup default superuser (if needed).
+            Auth.setupSuperuser();
         }
     }
 

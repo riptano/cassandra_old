@@ -45,7 +45,7 @@ public class AlterKeyspaceStatement extends SchemaAlteringStatement
 
     public void checkAccess(ClientState state) throws InvalidRequestException
     {
-        state.hasKeyspaceAccess(name, Permission.WRITE);
+        state.hasKeyspaceAccess(name, Permission.ALTER);
     }
 
     @Override

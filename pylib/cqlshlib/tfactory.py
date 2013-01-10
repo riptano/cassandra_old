@@ -13,12 +13,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# This is a sample password file for SimpleAuthenticator. The format of
-# this file is username=password. If -Dpasswd.mode=MD5 then the password
-# is represented as an md5 digest, otherwise it is cleartext (keep this
-# in mind when setting file mode and ownership). 'cassandra' is the default
-# superuser and can be removed later.
-cassandra=cassandra
-jsmith=haveabadpass
-dilbert=nomoovertime
+
+from thrift.transport import TSocket, TTransport
+
+def regular_transport_factory(host, port, env, config_file):
+    """
+    Basic unencrypted Thrift transport factory function.
+    Returns instantiated Thrift transport for use with cql.Connection.
+
+    Params:
+    * host .........: hostname of Cassandra node.
+    * port .........: port number to connect to.
+    * env ..........: environment variables (os.environ) - not used by this implementation.
+    * config_file ..: path to cqlsh config file - not used by this implementation.
+    """
+    tsocket = TSocket.TSocket(host, port)
+    return TTransport.TFramedTransport(tsocket)

@@ -155,7 +155,7 @@ public class UpdateStatement extends AbstractModification
         // Avoid unnecessary authorizations.
         if (!(cfamsSeen.contains(columnFamily)))
         {
-            clientState.hasColumnFamilyAccess(keyspace, columnFamily, Permission.WRITE);
+            clientState.hasColumnFamilyAccess(keyspace, columnFamily, Permission.MODIFY);
             cfamsSeen.add(columnFamily);
         }
 

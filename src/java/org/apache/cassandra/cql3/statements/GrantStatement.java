@@ -1,4 +1,4 @@
-/*
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,29 +18,27 @@
  */
 package org.apache.cassandra.cql3.statements;
 
-import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Set;
 
+import org.apache.cassandra.auth.IResource;
 import org.apache.cassandra.auth.Permission;
-import org.apache.cassandra.config.ConfigurationException;
-import org.apache.cassandra.cql3.CFName;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.service.MigrationManager;
+import org.apache.cassandra.thrift.CqlResult;
 import org.apache.cassandra.thrift.InvalidRequestException;
 
-public class DropColumnFamilyStatement extends SchemaAlteringStatement
+public class GrantStatement extends PermissionAlteringStatement
 {
-    public DropColumnFamilyStatement(CFName name)
+    public GrantStatement(Set<Permission> permissions, IResource resource, String username)
     {
-        super(name);
+        super(permissions, resource, username);
     }
 
-    public void checkAccess(ClientState state) throws InvalidRequestException
+    public CqlResult execute(ClientState state, List<ByteBuffer> variables) throws InvalidRequestException
     {
-        state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.DROP);
-    }
-
-    public void announceMigration() throws ConfigurationException
-    {
-        MigrationManager.announceColumnFamilyDrop(keyspace(), columnFamily());
+        DatabaseDescriptor.getAuthorizer().grant(state.getUser(), permissions, resource, username);
+        return null;
     }
 }
