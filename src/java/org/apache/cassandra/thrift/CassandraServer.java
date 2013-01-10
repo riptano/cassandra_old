@@ -657,6 +657,7 @@ public class CassandraServer implements Cassandra.Iface
 
     public KsDef describe_keyspace(String table) throws NotFoundException, InvalidRequestException
     {
+        state().validateLogin();
         KSMetaData ksm = Schema.instance.getTableDefinition(table);
         if (ksm == null)
             throw new NotFoundException();
@@ -837,6 +838,8 @@ public class CassandraServer implements Cassandra.Iface
 
     public List<KsDef> describe_keyspaces() throws TException, InvalidRequestException
     {
+        state().validateLogin();
+
         Set<String> keyspaces = Schema.instance.getTables();
         List<KsDef> ksset = new ArrayList<KsDef>(keyspaces.size());
 
@@ -1142,8 +1145,8 @@ public class CassandraServer implements Cassandra.Iface
 
     public void set_keyspace(String keyspace) throws InvalidRequestException, TException
     {
+        state().validateLogin();
         ThriftValidation.validateTable(keyspace);
-
         state().setKeyspace(keyspace);
     }
 
