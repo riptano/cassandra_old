@@ -126,22 +126,10 @@ public class CliOptions
 
             // Look for authentication credentials (username and password)
             if (cmd.hasOption(USERNAME_OPTION))
-            {
                 css.username = cmd.getOptionValue(USERNAME_OPTION);
-            }
-            else
-            {
-                css.username = "default";
-            }
 
             if (cmd.hasOption(PASSWORD_OPTION))
-            {
                 css.password = cmd.getOptionValue(PASSWORD_OPTION);
-            }
-            else
-            {
-                css.password = "";
-            }
 
             // Look for keyspace
             if (cmd.hasOption(KEYSPACE_OPTION))
