@@ -34,7 +34,6 @@ import org.apache.log4j.PropertyConfigurator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.auth.Auth;
 import org.apache.cassandra.concurrent.DebuggableThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.CFMetaData;
@@ -188,9 +187,6 @@ public abstract class AbstractCassandraDaemon implements CassandraDaemon
             logger.error("Fatal exception during initialization", e);
             System.exit(100);
         }
-
-        // setup Authenticator and Authorizer.
-        Auth.setup();
 
         // clean up debris in the rest of the tables
         for (String table : Schema.instance.getTables())

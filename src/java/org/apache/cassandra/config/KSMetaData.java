@@ -92,12 +92,6 @@ public final class KSMetaData
         return new KSMetaData(Table.SYSTEM_TABLE, LocalStrategy.class, Collections.<String, String>emptyMap(), true, cfDefs);
     }
 
-    public static KSMetaData authKeyspace()
-    {
-        List<CFMetaData> cfDefs = Arrays.asList(CFMetaData.AuthUsersCf);
-        return new KSMetaData(Auth.AUTH_KS, SimpleStrategy.class, ImmutableMap.of("replication_factor", "1"), true, cfDefs);
-    }
-
     public static KSMetaData testMetadata(String name, Class<? extends AbstractReplicationStrategy> strategyClass, Map<String, String> strategyOptions, CFMetaData... cfDefs)
     {
         return new KSMetaData(name, strategyClass, strategyOptions, true, Arrays.asList(cfDefs));

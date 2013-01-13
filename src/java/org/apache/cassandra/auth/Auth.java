@@ -17,11 +17,13 @@
  */
 package org.apache.cassandra.auth;
 
+import com.google.common.base.Throwables;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.thrift.*;
@@ -35,6 +37,14 @@ public class Auth
     // 'system_auth' in 1.2.
     public static final String AUTH_KS = "dse_auth";
     public static final String USERS_CF = "users";
+
+    private static final String AUTH_KS_SCHEMA =
+        String.format("CREATE KEYSPACE %s WITH strategy_class = 'SimpleStrategy' AND strategy_options:replication_factor = 1",
+                      AUTH_KS);
+
+    private static final String USERS_CF_SCHEMA =
+        String.format("CREATE TABLE %s.%s (name text PRIMARY KEY, super boolean) WITH gc_grace_seconds=864000",
+                      AUTH_KS, USERS_CF);
 
     /**
      * Checks if the username is stored in AUTH_KS.USERS_CF.
@@ -105,14 +115,50 @@ public class Auth
      */
     public static void setup()
     {
+        setupAuthKeyspace();
+        setupUsersTable();
+        setupDefaultSuperuser();
+
         authenticator().setup();
         authorizer().setup();
+    }
+
+    // Create auth keyspace unless it's already been loaded.
+    private static void setupAuthKeyspace()
+    {
+        if (Schema.instance.getKSMetaData(AUTH_KS) != null)
+            return;
+
+        try
+        {
+            QueryProcessor.processInternal(AUTH_KS_SCHEMA);
+        }
+        catch (Exception e)
+        {
+            Throwables.propagate(e);
+        }
+    }
+
+    // Create users table unless it's already been loaded.
+    private static void setupUsersTable()
+    {
+        if (Schema.instance.getCFMetaData(AUTH_KS, USERS_CF) != null)
+            return;
+
+        try
+        {
+            QueryProcessor.processInternal(USERS_CF_SCHEMA);
+        }
+        catch (Exception e)
+        {
+            Throwables.propagate(e);
+        }
     }
 
     /**
      * Sets up default superuser.
      */
-    public static void setupSuperuser()
+    private static void setupDefaultSuperuser()
     {
         try
         {

@@ -688,8 +688,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
             logger_.info("Bootstrap/Replace/Move completed! Now serving reads.");
             assert tokenMetadata_.sortedTokens().size() > 0;
 
-            // setup default superuser (if needed).
-            Auth.setupSuperuser();
+            Auth.setup();
         }
         else
         {
@@ -712,8 +711,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
             logger_.info("Leaving write survey mode and joining ring at operator request");
             assert tokenMetadata_.sortedTokens().size() > 0;
 
-            // setup default superuser (if needed).
-            Auth.setupSuperuser();
+            Auth.setup();
         }
     }
 

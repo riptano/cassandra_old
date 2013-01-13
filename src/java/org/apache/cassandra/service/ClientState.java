@@ -210,7 +210,7 @@ public class ClientState
         if (internalCall)
             return;
         validateLogin();
-        preventSystemKSSModification(keyspace, perm);
+        preventSystemKSSchemaModification(resource, perm);
         if (perm.equals(Permission.SELECT) && READABLE_SYSTEM_RESOURCES.contains(resource))
             return;
         if (PROTECTED_AUTH_RESOURCES.contains(resource))
@@ -231,10 +231,20 @@ public class ClientState
                                                       resource));
     }
 
-    private void preventSystemKSSModification(String keyspace, Permission perm) throws UnauthorizedException
+    private void preventSystemKSSchemaModification(DataResource resource, Permission perm) throws UnauthorizedException
     {
-        if (Schema.systemKeyspaceNames.contains(keyspace.toLowerCase()) && !perm.equals(Permission.SELECT))
-            throw new UnauthorizedException(keyspace + " keyspace is not user-modifiable.");
+        if (!Schema.systemKeyspaceNames.contains(resource.getKeyspace().toLowerCase()))
+            return;
+
+        // only forbid system schema modification.
+        if (!perm.equals(Permission.CREATE) && !perm.equals(Permission.ALTER) && !perm.equals(Permission.DROP))
+            return;
+
+        // allow Auth.AUTH_KS modification (strategy and replication factor) if the user has ALTER permission on it.
+        if (perm.equals(Permission.ALTER) && resource.isKeyspaceLevel() && resource.getKeyspace().equals(Auth.AUTH_KS))
+            return;
+
+        throw new UnauthorizedException(resource.getKeyspace() + " keyspace schema is not user-modifiable.");
     }
 
 

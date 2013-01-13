@@ -33,7 +33,6 @@ import org.apache.commons.lang.builder.ToStringBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.auth.Auth;
 import org.apache.cassandra.cql3.CFDefinition;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -99,7 +98,6 @@ public final class CFMetaData
     public static final CFMetaData SchemaKeyspacesCf;
     public static final CFMetaData SchemaColumnFamiliesCf;
     public static final CFMetaData SchemaColumnsCf;
-    public static final CFMetaData AuthUsersCf;
     static
     {
         SchemaKeyspacesCf = newSchemaMetadata(SystemTable.SCHEMA_KEYSPACES_CF,
@@ -159,17 +157,6 @@ public final class CFMetaData
                                           ColumnDefinition.ascii("index_options", 2),
                                           ColumnDefinition.ascii("index_name", 2),
                                           ColumnDefinition.ascii("component_index", 2));
-
-        AuthUsersCf = newSystemMetadata(Auth.AUTH_KS,
-                                        Auth.USERS_CF,
-                                        19,
-                                        "known users and their superuser status",
-                                        UTF8Type.instance,
-                                        null)
-                      .keyValidator(UTF8Type.instance)
-                      .keyAlias("name")
-                      .gcGraceSeconds(864000)
-                      .columnMetadata(ColumnDefinition.bool("super", null));
     }
 
     public enum Caching
