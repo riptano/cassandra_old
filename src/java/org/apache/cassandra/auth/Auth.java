@@ -18,6 +18,14 @@
 package org.apache.cassandra.auth;
 
 import com.google.common.base.Throwables;
+import java.net.InetAddress;
+import java.net.SocketException;
+import java.net.UnknownHostException;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.TreeSet;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +34,10 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.*;
+import org.apache.cassandra.utils.FBUtilities;
 
 public class Auth
 {
@@ -115,12 +126,39 @@ public class Auth
      */
     public static void setup()
     {
-        setupAuthKeyspace();
-        setupUsersTable();
-        setupDefaultSuperuser();
-
-        authenticator().setup();
-        authorizer().setup();
+        try
+        {
+            if (isSchemaCreatorNode())
+            {
+                logger.info("Creating auth schema...");
+                setupAuthKeyspace();
+                setupUsersTable();
+                setupDefaultSuperuser();
+                authenticator().setup();
+                authorizer().setup();
+                logger.info("...done creating auth schema");
+            }
+            else
+            {
+                logger.info("Waiting for auth schema creation...");
+                long limit = System.currentTimeMillis() + StorageService.RING_DELAY;
+                boolean created = false;
+                while (!created && limit - System.currentTimeMillis() >= 0)
+                {
+                    created = isSchemaCreated();
+                    Thread.sleep(1000);
+                }
+                if (!created)
+                {
+                    throw new RuntimeException("Schema creation failed");
+                }
+                logger.info("...found auth schema");
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new RuntimeException(ex.getMessage(), ex);
+        }
     }
 
     // Create auth keyspace unless it's already been loaded.
@@ -189,5 +227,44 @@ public class Auth
     private static IAuthorizer authorizer()
     {
         return DatabaseDescriptor.getAuthorizer();
+    }
+    
+    private static boolean isSchemaCreatorNode() throws SocketException, UnknownHostException
+    {
+        Set<InetAddress> liveNodes = Gossiper.instance.getLiveMembers();
+        Set<InetAddress> seedNodes = DatabaseDescriptor.getSeeds();
+        Set<InetAddress> candidates = new TreeSet<InetAddress>(new Comparator<InetAddress>()
+        {
+            public int compare(InetAddress a, InetAddress b)
+            {
+                return a.getHostAddress().compareTo(b.getHostAddress());
+            }
+        });
+        // Sort nodes:
+        for (InetAddress candidate : liveNodes)
+        {
+            if (seedNodes.contains(candidate))
+            {
+                candidates.add(candidate);
+            }
+        }
+        // Pick the creator one:
+        for (InetAddress address : candidates)
+        {
+            if (FBUtilities.getBroadcastAddress().equals(address))
+            {
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isSchemaCreated()
+    {
+        return (Schema.instance.getKSMetaData(AUTH_KS) != null) && (Schema.instance.getCFMetaData(AUTH_KS, USERS_CF) != null);
     }
 }
