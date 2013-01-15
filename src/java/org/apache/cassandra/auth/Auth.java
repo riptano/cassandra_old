@@ -123,24 +123,28 @@ public class Auth
      */
     public static void setup()
     {
-        if (isSchemaCreated())
-            return;
-
         // A temporary hack to reduce the possibility of SchemaDisagreementException during auth keyspace and cfs
         // creation. Not bullet-proof, but arguably Good Enough For Now.
         if (isSchemaCreatorNode())
         {
-            logger.info("Creating auth schema and setting up authenticator/authorizer");
-            setupAuthKeyspace();
-            setupUsersTable();
-            setupDefaultSuperuser();
+            if (!isSchemaCreated())
+            {
+                logger.info("Creating auth schema");
+                setupAuthKeyspace();
+                setupUsersTable();
+                logger.info("Done creating auth schema");
+            }
 
+            setupDefaultSuperuser();
             authenticator().setup();
             authorizer().setup();
-            logger.info("Done creating auth schema and setting up authenticator/authorizer");
         }
         else
         {
+            // avoid excessive log records.
+            if (isSchemaCreated())
+                return;
+
             logger.info("Waiting for auth schema creation");
             long deadline = System.currentTimeMillis() + StorageService.RING_DELAY;
             while (System.currentTimeMillis() < deadline)
