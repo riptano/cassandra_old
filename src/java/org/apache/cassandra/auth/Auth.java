@@ -17,15 +17,12 @@
  */
 package org.apache.cassandra.auth;
 
-import com.google.common.base.Throwables;
 import java.net.InetAddress;
-import java.net.SocketException;
-import java.net.UnknownHostException;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.TreeSet;
+import java.util.concurrent.TimeUnit;
+import java.util.*;
+
+import com.google.common.base.Throwables;
+import com.google.common.collect.Sets;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,7 +81,7 @@ public class Auth
             CqlResult result = QueryProcessor.processInternal(query);
             return !result.type.equals(CqlResultType.VOID) && new UntypedResultSet(result.rows).one().getBoolean("super");
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             logger.error("Superuser check failed for user {}: {}", username, e.toString());
             return false;
@@ -122,42 +119,49 @@ public class Auth
     }
 
     /**
-     * Sets up Authenticator and Authorizer.
+     * Sets up dse_auth keyspace and dse_auth.users cf, also authenticator and authorizer ks/cfs if required.
      */
     public static void setup()
     {
-        try
+        if (isSchemaCreated())
+            return;
+
+        // A temporary hack to reduce the possibility of SchemaDisagreementException during auth keyspace and cfs
+        // creation. Not bullet-proof, but arguably Good Enough For Now.
+        if (isSchemaCreatorNode())
         {
-            if (isSchemaCreatorNode())
-            {
-                logger.info("Creating auth schema...");
-                setupAuthKeyspace();
-                setupUsersTable();
-                setupDefaultSuperuser();
-                authenticator().setup();
-                authorizer().setup();
-                logger.info("...done creating auth schema");
-            }
-            else
-            {
-                logger.info("Waiting for auth schema creation...");
-                long limit = System.currentTimeMillis() + StorageService.RING_DELAY;
-                boolean created = false;
-                while (!created && limit - System.currentTimeMillis() >= 0)
-                {
-                    created = isSchemaCreated();
-                    Thread.sleep(1000);
-                }
-                if (!created)
-                {
-                    throw new RuntimeException("Schema creation failed");
-                }
-                logger.info("...found auth schema");
-            }
+            logger.info("Creating auth schema and setting up authenticator/authorizer");
+            setupAuthKeyspace();
+            setupUsersTable();
+            setupDefaultSuperuser();
+
+            authenticator().setup();
+            authorizer().setup();
+            logger.info("Done creating auth schema and setting up authenticator/authorizer");
         }
-        catch (Exception ex)
+        else
         {
-            throw new RuntimeException(ex.getMessage(), ex);
+            logger.info("Waiting for auth schema creation");
+            long deadline = System.currentTimeMillis() + StorageService.RING_DELAY;
+            while (System.currentTimeMillis() < deadline)
+            {
+                try
+                {
+                    TimeUnit.MILLISECONDS.sleep(1000);
+                }
+                catch (InterruptedException e)
+                {
+                    throw new AssertionError(e); // not supposed to happen.
+                }
+
+                if (isSchemaCreated())
+                {
+                    logger.info("Auth schema created");
+                    return;
+                }
+            }
+
+            throw new RuntimeException("Auth setup failed");
         }
     }
 
@@ -171,7 +175,7 @@ public class Auth
         {
             QueryProcessor.processInternal(AUTH_KS_SCHEMA);
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             Throwables.propagate(e);
         }
@@ -187,7 +191,7 @@ public class Auth
         {
             QueryProcessor.processInternal(USERS_CF_SCHEMA);
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             Throwables.propagate(e);
         }
@@ -207,7 +211,7 @@ public class Auth
                 logger.info("Created default superuser {}", DEFAULT_SUPERUSER_NAME);
             }
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             logger.warn("Skipping default superuser setup: one or more nodes were unavailable or timed out");
         }
@@ -228,43 +232,24 @@ public class Auth
     {
         return DatabaseDescriptor.getAuthorizer();
     }
-    
-    private static boolean isSchemaCreatorNode() throws SocketException, UnknownHostException
+
+    private static boolean isSchemaCreatorNode()
     {
-        Set<InetAddress> liveNodes = Gossiper.instance.getLiveMembers();
-        Set<InetAddress> seedNodes = DatabaseDescriptor.getSeeds();
-        Set<InetAddress> candidates = new TreeSet<InetAddress>(new Comparator<InetAddress>()
-        {
+        List<InetAddress> candidates = new ArrayList<InetAddress>(Sets.intersection(Gossiper.instance.getLiveMembers(),
+                                                                                    DatabaseDescriptor.getSeeds()));
+
+        Collections.sort(candidates, new Comparator<InetAddress>(){
             public int compare(InetAddress a, InetAddress b)
             {
                 return a.getHostAddress().compareTo(b.getHostAddress());
             }
         });
-        // Sort nodes:
-        for (InetAddress candidate : liveNodes)
-        {
-            if (seedNodes.contains(candidate))
-            {
-                candidates.add(candidate);
-            }
-        }
-        // Pick the creator one:
-        for (InetAddress address : candidates)
-        {
-            if (FBUtilities.getBroadcastAddress().equals(address))
-            {
-                return true;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        return false;
+
+        return !candidates.isEmpty() && candidates.get(0).equals(FBUtilities.getBroadcastAddress());
     }
 
     private static boolean isSchemaCreated()
     {
-        return (Schema.instance.getKSMetaData(AUTH_KS) != null) && (Schema.instance.getCFMetaData(AUTH_KS, USERS_CF) != null);
+        return Schema.instance.getCFMetaData(AUTH_KS, USERS_CF) != null;
     }
 }
