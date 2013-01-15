@@ -17,7 +17,12 @@
  */
 package org.apache.cassandra.auth;
 
+import java.net.InetAddress;
+import java.util.concurrent.TimeUnit;
+import java.util.*;
+
 import com.google.common.base.Throwables;
+import com.google.common.collect.Sets;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +31,10 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.*;
+import org.apache.cassandra.utils.FBUtilities;
 
 public class Auth
 {
@@ -73,7 +81,7 @@ public class Auth
             CqlResult result = QueryProcessor.processInternal(query);
             return !result.type.equals(CqlResultType.VOID) && new UntypedResultSet(result.rows).one().getBoolean("super");
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             logger.error("Superuser check failed for user {}: {}", username, e.toString());
             return false;
@@ -111,16 +119,54 @@ public class Auth
     }
 
     /**
-     * Sets up Authenticator and Authorizer.
+     * Sets up dse_auth keyspace and dse_auth.users cf, also authenticator and authorizer ks/cfs if required.
      */
     public static void setup()
     {
-        setupAuthKeyspace();
-        setupUsersTable();
-        setupDefaultSuperuser();
+        // A temporary hack to reduce the possibility of SchemaDisagreementException during auth keyspace and cfs
+        // creation. Not bullet-proof, but arguably Good Enough For Now.
+        if (isSchemaCreatorNode())
+        {
+            if (!isSchemaCreated())
+            {
+                logger.info("Creating auth schema");
+                setupAuthKeyspace();
+                setupUsersTable();
+                logger.info("Done creating auth schema");
+            }
 
-        authenticator().setup();
-        authorizer().setup();
+            setupDefaultSuperuser();
+            authenticator().setup();
+            authorizer().setup();
+        }
+        else
+        {
+            // avoid excessive log records.
+            if (isSchemaCreated())
+                return;
+
+            logger.info("Waiting for auth schema creation");
+            long deadline = System.currentTimeMillis() + StorageService.RING_DELAY;
+            while (System.currentTimeMillis() < deadline)
+            {
+                try
+                {
+                    TimeUnit.MILLISECONDS.sleep(1000);
+                }
+                catch (InterruptedException e)
+                {
+                    throw new AssertionError(e); // not supposed to happen.
+                }
+
+                if (isSchemaCreated())
+                {
+                    logger.info("Auth schema created");
+                    return;
+                }
+            }
+
+            throw new RuntimeException("Auth setup failed");
+        }
     }
 
     // Create auth keyspace unless it's already been loaded.
@@ -133,7 +179,7 @@ public class Auth
         {
             QueryProcessor.processInternal(AUTH_KS_SCHEMA);
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             Throwables.propagate(e);
         }
@@ -149,7 +195,7 @@ public class Auth
         {
             QueryProcessor.processInternal(USERS_CF_SCHEMA);
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             Throwables.propagate(e);
         }
@@ -169,7 +215,7 @@ public class Auth
                 logger.info("Created default superuser {}", DEFAULT_SUPERUSER_NAME);
             }
         }
-        catch (Exception e)
+        catch (Throwable e)
         {
             logger.warn("Skipping default superuser setup: one or more nodes were unavailable or timed out");
         }
@@ -189,5 +235,25 @@ public class Auth
     private static IAuthorizer authorizer()
     {
         return DatabaseDescriptor.getAuthorizer();
+    }
+
+    private static boolean isSchemaCreatorNode()
+    {
+        List<InetAddress> candidates = new ArrayList<InetAddress>(Sets.intersection(Gossiper.instance.getLiveMembers(),
+                                                                                    DatabaseDescriptor.getSeeds()));
+
+        Collections.sort(candidates, new Comparator<InetAddress>(){
+            public int compare(InetAddress a, InetAddress b)
+            {
+                return a.getHostAddress().compareTo(b.getHostAddress());
+            }
+        });
+
+        return !candidates.isEmpty() && candidates.get(0).equals(FBUtilities.getBroadcastAddress());
+    }
+
+    private static boolean isSchemaCreated()
+    {
+        return Schema.instance.getCFMetaData(AUTH_KS, USERS_CF) != null;
     }
 }
