@@ -132,7 +132,7 @@ public class Auth
         // up and sync schema.
         try
         {
-            TimeUnit.MILLISECONDS.sleep(2000);
+            TimeUnit.MILLISECONDS.sleep(1000);
         }
         catch (InterruptedException e)
         {
@@ -256,13 +256,14 @@ public class Auth
 
     private static boolean isSchemaCreatorNode()
     {
-        if (Gossiper.instance.getLiveMembers().size() == 1)
+        if (Gossiper.instance.getLiveMembers().size() == 1 && DatabaseDescriptor.getSeeds().isEmpty())
             return true;
 
         List<InetAddress> candidates = new ArrayList<InetAddress>(Sets.intersection(Gossiper.instance.getLiveMembers(),
-                                                                                    DatabaseDescriptor.getSeeds()));
+                DatabaseDescriptor.getSeeds()));
 
-        Collections.sort(candidates, new Comparator<InetAddress>(){
+        Collections.sort(candidates, new Comparator<InetAddress>()
+        {
             public int compare(InetAddress a, InetAddress b)
             {
                 return a.getHostAddress().compareTo(b.getHostAddress());
