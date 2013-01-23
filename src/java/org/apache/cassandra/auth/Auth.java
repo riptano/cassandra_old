@@ -123,20 +123,23 @@ public class Auth
      */
     public static void setup()
     {
-        // A hack to make the next hack work properly.
-        // Issue: if a node is a seed, then there is no delay to see the peers.
+        // Issue: if a node is a seed (or is already bootstrapped), then there is no delay to see the peers.
         // A fresh new node starts up, sees that it's the only node in the ring and it doesn't yet have dse_auth keyspace.
         // But by the time that keyspace creation gets to validating schema agreement, its peers are up, and schema versions don't
         // match, and an SDE is thrown since validateSchemaAgreement() fails.
         // Solution: add a small delay so that even if the node is a seed, it'll still wait a little for its peers to show
         // up and sync schema.
-        try
+        if (!isSchemaCreated())
         {
-            TimeUnit.MILLISECONDS.sleep(2000);
-        }
-        catch (InterruptedException e)
-        {
-            throw new AssertionError(e);
+            logger.info("Waiting 5 seconds for peers to show up before setting up auth schema");
+            try
+            {
+                TimeUnit.MILLISECONDS.sleep(5000);
+            }
+            catch (InterruptedException e)
+            {
+                throw new AssertionError(e);
+            }
         }
 
         // A temporary hack to reduce the possibility of SchemaDisagreementException during auth keyspace and cfs
@@ -256,9 +259,6 @@ public class Auth
 
     private static boolean isSchemaCreatorNode()
     {
-        if (Gossiper.instance.getLiveMembers().size() == 1)
-            return true;
-
         List<InetAddress> candidates = new ArrayList<InetAddress>(Sets.intersection(Gossiper.instance.getLiveMembers(),
                                                                                     DatabaseDescriptor.getSeeds()));
 
