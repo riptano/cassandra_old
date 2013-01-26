@@ -84,13 +84,12 @@ public class CompressedRandomAccessReader extends RandomAccessReader
 
         if (channel.read(compressed) != chunk.length)
             throw new IOException(String.format("(%s) failed to read %d bytes from offset %d.", getPath(), chunk.length, chunk.offset));
-
         // technically flip() is unnecessary since all the remaining work uses the raw array, but if that changes
         // in the future this will save a lot of hair-pulling
         compressed.flip();
         validBufferBytes = metadata.compressor().uncompress(compressed.array(), 0, chunk.length, buffer, 0);
 
-        if (metadata.parameters.crcChance > FBUtilities.threadLocalRandom().nextDouble())
+        if (metadata.parameters.getCrcCheckChance() > FBUtilities.threadLocalRandom().nextDouble())
         {
             checksum.update(buffer, 0, validBufferBytes);
 

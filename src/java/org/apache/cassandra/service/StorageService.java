@@ -29,7 +29,10 @@ import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.management.MBeanServer;
+import javax.management.Notification;
+import javax.management.NotificationBroadcasterSupport;
 import javax.management.ObjectName;
 
 import com.google.common.base.Supplier;
@@ -77,11 +80,14 @@ import org.apache.cassandra.utils.WrappedRunnable;
  * This class will also maintain histograms of the load information
  * of other nodes in the cluster.
  */
-public class StorageService implements IEndpointStateChangeSubscriber, StorageServiceMBean
+public class StorageService extends NotificationBroadcasterSupport implements IEndpointStateChangeSubscriber, StorageServiceMBean
 {
     private static Logger logger_ = LoggerFactory.getLogger(StorageService.class);
 
     public static final int RING_DELAY = getRingDelay(); // delay after which we assume ring has stablized
+
+    /* JMX notification serial number counter */
+    private final AtomicLong notificationSerialNumber = new AtomicLong();
 
     /* All verb handler identifiers */
     public enum Verb
@@ -243,6 +249,8 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
 
     private static final AtomicInteger nextRepairCommand = new AtomicInteger();
 
+    private final ObjectName jmxObjectName;
+
     public void finishBootstrapping()
     {
         isBootstrapMode = false;
@@ -264,7 +272,8 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
         MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
         try
         {
-            mbs.registerMBean(this, new ObjectName("org.apache.cassandra.db:type=StorageService"));
+            jmxObjectName = new ObjectName("org.apache.cassandra.db:type=StorageService");
+            mbs.registerMBean(this, jmxObjectName);
         }
         catch (Exception e)
         {
@@ -615,7 +624,10 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
                     throw new AssertionError(e);
                 }
             }
-            setMode(Mode.JOINING, "schema complete, ready to bootstrap", true);
+            setMode(Mode.JOINING, "schema complete", true);
+            setMode(Mode.JOINING, "waiting for pending range calculation", true);
+            PendingRangeCalculatorService.instance.blockUntilFinished();
+            setMode(Mode.JOINING, "calculation complete, ready to bootstrap", true);
 
 
             if (logger_.isDebugEnabled())
@@ -1102,7 +1114,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
         }
 
         tokenMetadata_.addBootstrapToken(token, endpoint);
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
     }
 
     /**
@@ -1156,7 +1168,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
         if (tokenMetadata_.isMoving(endpoint)) // if endpoint was moving to a new token
             tokenMetadata_.removeFromMoving(endpoint);
 
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
     }
 
     /**
@@ -1191,7 +1203,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
         // at this point the endpoint is certainly a member with this token, so let's proceed
         // normally
         tokenMetadata_.addLeavingEndpoint(endpoint);
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
     }
 
     /**
@@ -1227,7 +1239,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
 
         tokenMetadata_.addMovingEndpoint(token, endpoint);
 
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
     }
 
     /**
@@ -1269,7 +1281,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
 
                 // Note that the endpoint is being removed
                 tokenMetadata_.addLeavingEndpoint(endpoint);
-                calculatePendingRanges();
+                PendingRangeCalculatorService.instance.update();
 
                 // find the endpoint coordinating this removal that we need to notify when we're done
                 String[] coordinator = Gossiper.instance.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.REMOVAL_COORDINATOR).value.split(VersionedValue.DELIMITER_STR, -1);
@@ -1288,7 +1300,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
         Gossiper.instance.removeEndpoint(endpoint);
         tokenMetadata_.removeEndpoint(endpoint);
         tokenMetadata_.removeBootstrapToken(token);
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
         if (!isClientMode)
         {
             logger_.info("Removing token " + token + " for " + endpoint);
@@ -1318,114 +1330,6 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
             expireTime = Long.parseLong(pieces[2]);
         }
         return expireTime;
-    }
-
-    /**
-     * Calculate pending ranges according to bootsrapping and leaving nodes. Reasoning is:
-     *
-     * (1) When in doubt, it is better to write too much to a node than too little. That is, if
-     * there are multiple nodes moving, calculate the biggest ranges a node could have. Cleaning
-     * up unneeded data afterwards is better than missing writes during movement.
-     * (2) When a node leaves, ranges for other nodes can only grow (a node might get additional
-     * ranges, but it will not lose any of its current ranges as a result of a leave). Therefore
-     * we will first remove _all_ leaving tokens for the sake of calculation and then check what
-     * ranges would go where if all nodes are to leave. This way we get the biggest possible
-     * ranges with regard current leave operations, covering all subsets of possible final range
-     * values.
-     * (3) When a node bootstraps, ranges of other nodes can only get smaller. Without doing
-     * complex calculations to see if multiple bootstraps overlap, we simply base calculations
-     * on the same token ring used before (reflecting situation after all leave operations have
-     * completed). Bootstrapping nodes will be added and removed one by one to that metadata and
-     * checked what their ranges would be. This will give us the biggest possible ranges the
-     * node could have. It might be that other bootstraps make our actual final ranges smaller,
-     * but it does not matter as we can clean up the data afterwards.
-     *
-     * NOTE: This is heavy and ineffective operation. This will be done only once when a node
-     * changes state in the cluster, so it should be manageable.
-     */
-    private void calculatePendingRanges()
-    {
-        for (String table : Schema.instance.getNonSystemTables())
-            calculatePendingRanges(Table.open(table).getReplicationStrategy(), table);
-    }
-
-    // public & static for testing purposes
-    public static void calculatePendingRanges(AbstractReplicationStrategy strategy, String table)
-    {
-        TokenMetadata tm = StorageService.instance.getTokenMetadata();
-        Multimap<Range<Token>, InetAddress> pendingRanges = HashMultimap.create();
-        Map<Token, InetAddress> bootstrapTokens = tm.getBootstrapTokens();
-        Set<InetAddress> leavingEndpoints = tm.getLeavingEndpoints();
-
-        if (bootstrapTokens.isEmpty() && leavingEndpoints.isEmpty() && tm.getMovingEndpoints().isEmpty())
-        {
-            if (logger_.isDebugEnabled())
-                logger_.debug("No bootstrapping, leaving or moving nodes -> empty pending ranges for {}", table);
-            tm.setPendingRanges(table, pendingRanges);
-            return;
-        }
-
-        Multimap<InetAddress, Range<Token>> addressRanges = strategy.getAddressRanges();
-
-        // Copy of metadata reflecting the situation after all leave operations are finished.
-        TokenMetadata allLeftMetadata = tm.cloneAfterAllLeft();
-
-        // get all ranges that will be affected by leaving nodes
-        Set<Range<Token>> affectedRanges = new HashSet<Range<Token>>();
-        for (InetAddress endpoint : leavingEndpoints)
-            affectedRanges.addAll(addressRanges.get(endpoint));
-
-        // for each of those ranges, find what new nodes will be responsible for the range when
-        // all leaving nodes are gone.
-        for (Range<Token> range : affectedRanges)
-        {
-            Set<InetAddress> currentEndpoints = ImmutableSet.copyOf(strategy.calculateNaturalEndpoints(range.right, tm));
-            Set<InetAddress> newEndpoints = ImmutableSet.copyOf(strategy.calculateNaturalEndpoints(range.right, allLeftMetadata));
-            pendingRanges.putAll(range, Sets.difference(newEndpoints, currentEndpoints));
-        }
-
-        // At this stage pendingRanges has been updated according to leave operations. We can
-        // now continue the calculation by checking bootstrapping nodes.
-
-        // For each of the bootstrapping nodes, simply add and remove them one by one to
-        // allLeftMetadata and check in between what their ranges would be.
-        synchronized (bootstrapTokens)
-        {
-            for (Map.Entry<Token, InetAddress> entry : bootstrapTokens.entrySet())
-            {
-                InetAddress endpoint = entry.getValue();
-
-                allLeftMetadata.updateNormalToken(entry.getKey(), endpoint);
-                for (Range<Token> range : strategy.getAddressRanges(allLeftMetadata).get(endpoint))
-                    pendingRanges.put(range, endpoint);
-                allLeftMetadata.removeEndpoint(endpoint);
-            }
-        }
-
-        // At this stage pendingRanges has been updated according to leaving and bootstrapping nodes.
-        // We can now finish the calculation by checking moving nodes.
-
-        // For each of the moving nodes, we do the same thing we did for bootstrapping:
-        // simply add and remove them one by one to allLeftMetadata and check in between what their ranges would be.
-        for (Pair<Token, InetAddress> moving : tm.getMovingEndpoints())
-        {
-            InetAddress endpoint = moving.right; // address of the moving node
-
-            //  moving.left is a new token of the endpoint
-            allLeftMetadata.updateNormalToken(moving.left, endpoint);
-
-            for (Range<Token> range : strategy.getAddressRanges(allLeftMetadata).get(endpoint))
-            {
-                pendingRanges.put(range, endpoint);
-            }
-
-            allLeftMetadata.removeEndpoint(endpoint);
-        }
-
-        tm.setPendingRanges(table, pendingRanges);
-
-        if (logger_.isDebugEnabled())
-            logger_.debug("Pending ranges:\n" + (pendingRanges.isEmpty() ? "<empty>" : tm.printPendingRanges()));
     }
 
     /**
@@ -1617,7 +1521,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
     public void onRemove(InetAddress endpoint)
     {
         tokenMetadata_.removeEndpoint(endpoint);
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
     }
 
     public void onDead(InetAddress endpoint, EndpointState state)
@@ -1935,6 +1839,82 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
             logger_.debug("Forcing flush on keyspace " + tableName + ", CF " + cfStore.getColumnFamilyName());
             cfStore.forceBlockingFlush();
         }
+    }
+
+    /**
+     * Sends JMX notification to subscribers.
+     *
+     * @param type Message type
+     * @param message Message itself
+     * @param userObject Arbitrary object to attach to notification
+     */
+    public void sendNotification(String type, String message, Object userObject)
+    {
+        Notification jmxNotification = new Notification(type, jmxObjectName, notificationSerialNumber.incrementAndGet(), message);
+        jmxNotification.setUserData(userObject);
+        sendNotification(jmxNotification);
+    }
+
+    public int forceRepairAsync(final String tableName, final boolean isSequential, final boolean primaryRange, final String... columnFamilies)
+    {
+        if (Table.SYSTEM_TABLE.equals(tableName))
+            return 0;
+
+        final int cmd = nextRepairCommand.incrementAndGet();
+        final Collection<Range<Token>> ranges = primaryRange ? Collections.singletonList(getLocalPrimaryRange()) : getLocalRanges(tableName);
+        if (ranges.size() > 0)
+        {
+            new Thread(new WrappedRunnable()
+            {
+                protected void runMayThrow() throws Exception
+                {
+                    String message = String.format("Starting repair command #%d, repairing %d ranges for keyspace %s", cmd, ranges.size(), tableName);
+                    logger_.info(message);
+                    sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.STARTED.ordinal()});
+
+                    List<AntiEntropyService.RepairFuture> futures = new ArrayList<AntiEntropyService.RepairFuture>(ranges.size());
+                    for (Range<Token> range : ranges)
+                    {
+                        AntiEntropyService.RepairFuture future = forceTableRepair(range, tableName, isSequential, columnFamilies);
+                        if (future == null)
+                            continue;
+                        futures.add(future);
+                        // wait for a session to be done with its differencing before starting the next one
+                        try
+                        {
+                            future.session.differencingDone.await();
+                        }
+                        catch (InterruptedException e)
+                        {
+                            message = "Interrupted while waiting for the differencing of repair session " + future.session + " to be done. Repair may be imprecise.";
+                            logger_.error(message, e);
+                            sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
+                        }
+                    }
+                    for (AntiEntropyService.RepairFuture future : futures)
+                    {
+                        try
+                        {
+                            future.get();
+                            message = String.format("Repair session %s for range %s finished", future.session.getName(), future.session.getRange().toString());
+                            sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_SUCCESS.ordinal()});
+                        }
+                        catch (ExecutionException e)
+                        {
+                            message = String.format("Repair session %s for range %s failed with error %s", future.session.getName(), future.session.getRange().toString(), e.getCause().getMessage());
+                            sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
+                        }
+                        catch (Exception e)
+                        {
+                            message = String.format("Repair session %s for range %s failed with error %s", future.session.getName(), future.session.getRange().toString(), e.getMessage());
+                            sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
+                        }
+                    }
+                    sendNotification("repair", String.format("Repair command #%d finished", cmd), new int[]{cmd, AntiEntropyService.Status.FINISHED.ordinal()});
+                }
+            }).start();
+        }
+        return cmd;
     }
 
     /**
@@ -2285,7 +2265,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
     {
         Gossiper.instance.addLocalApplicationState(ApplicationState.STATUS, valueFactory.leaving(getLocalToken()));
         tokenMetadata_.addLeavingEndpoint(FBUtilities.getBroadcastAddress());
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
     }
 
     public void decommission() throws InterruptedException
@@ -2294,6 +2274,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
             throw new UnsupportedOperationException("local node is not a member of the token ring yet");
         if (tokenMetadata_.cloneAfterAllLeft().sortedTokens().size() < 2)
             throw new UnsupportedOperationException("no other normal nodes in the ring; decommission would be pointless");
+        PendingRangeCalculatorService.instance.blockUntilFinished();
         for (String table : Schema.instance.getNonSystemTables())
         {
             if (tokenMetadata_.getPendingRanges(table, FBUtilities.getBroadcastAddress()).size() > 0)
@@ -2325,7 +2306,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
     {
         SystemTable.setBootstrapState(SystemTable.BootstrapState.NEEDS_BOOTSTRAP);
         tokenMetadata_.removeEndpoint(FBUtilities.getBroadcastAddress());
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
 
         Gossiper.instance.addLocalApplicationState(ApplicationState.STATUS, valueFactory.left(getLocalToken(),Gossiper.computeExpireTime()));
         int delay = Math.max(RING_DELAY, Gossiper.intervalInMillis * 2);
@@ -2398,6 +2379,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
         InetAddress localAddress = FBUtilities.getBroadcastAddress();
         List<String> tablesToProcess = Schema.instance.getNonSystemTables();
 
+        PendingRangeCalculatorService.instance.blockUntilFinished();
         // checking if data is moving to this node
         for (String table : tablesToProcess)
         {
@@ -2605,7 +2587,7 @@ public class StorageService implements IEndpointStateChangeSubscriber, StorageSe
         removingNode = endpoint;
 
         tokenMetadata_.addLeavingEndpoint(endpoint);
-        calculatePendingRanges();
+        PendingRangeCalculatorService.instance.update();
         // the gossiper will handle spoofing this node's state to REMOVING_TOKEN for us
         // we add our own token so other nodes to let us know when they're done
         Gossiper.instance.advertiseRemoving(endpoint, token, localToken);

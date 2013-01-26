@@ -452,8 +452,8 @@ public class CassandraServer implements Cassandra.Iface
             pages++;
             // We're done if either:
             //   - We've querying the number of columns requested by the user
-            //   - The last page wasn't full
-            if (remaining == 0 || columns.size() < predicate.slice_range.count)
+            //   - last fetched page only contains the column we already fetched
+            if (remaining == 0 || ((columns.size() == 1) && (firstName.equals(predicate.slice_range.start))))
                 break;
             else
                 predicate.slice_range.start = getName(columns.get(columns.size() - 1));
@@ -694,8 +694,9 @@ public class CassandraServer implements Cassandra.Iface
             }
             else
             {
-                RowPosition end = range.end_key == null ? p.getTokenFactory().fromString(range.end_token).maxKeyBound(p)
-                                                    : RowPosition.forKey(range.end_key, p);
+                RowPosition end = range.end_key == null
+                                ? p.getTokenFactory().fromString(range.end_token).maxKeyBound(p)
+                                : RowPosition.forKey(range.end_key, p);
                 bounds = new Bounds<RowPosition>(RowPosition.forKey(range.start_key, p), end);
             }
             schedule(DatabaseDescriptor.getRpcTimeout());
@@ -749,8 +750,9 @@ public class CassandraServer implements Cassandra.Iface
         }
         else
         {
-            RowPosition end = range.end_key == null ? p.getTokenFactory().fromString(range.end_token).maxKeyBound(p)
-                                                    : RowPosition.forKey(range.end_key, p);
+            RowPosition end = range.end_key == null
+                            ? p.getTokenFactory().fromString(range.end_token).maxKeyBound(p)
+                            : RowPosition.forKey(range.end_key, p);
             bounds = new Bounds<RowPosition>(RowPosition.forKey(range.start_key, p), end);
         }
 
