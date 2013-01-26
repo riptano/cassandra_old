@@ -1,3 +1,6 @@
+1.1.9-dse-2.2.2
+ * Pulled in fix for CASSANDRA-5168
+
 1.1.9
  * Simplify CompressedRandomAccessReader to work around JDK FD bug (CASSANDRA-5088)
  * Improve handling a changing target throttle rate mid-compaction (CASSANDRA-5087)
