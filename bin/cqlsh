@@ -746,6 +746,8 @@ class Shell(cmd.Cmd):
         raise ColumnFamilyNotFound("Unconfigured column family %r" % (cfname,))
 
     def get_columnfamily_names(self, ksname=None):
+        if self.cqlver_atleast(3) and not ksname in ('system', 'dse_auth'):
+            return self.get_columnfamily_names_cql3(ksname=ksname)
         return [c.name for c in self.get_columnfamilies(ksname)]
 
     def get_index_names(self, ksname=None):
@@ -845,6 +847,16 @@ class Shell(cmd.Cmd):
                             {'ks': ksname, 'cf': cfname})
         cols = self.fetchdict_all()
         return cql3handling.CqlTableDef.from_layout(layout, cols)
+
+    def get_columnfamily_names_cql3(self, ksname=None):
+        if ksname is None:
+            ksname = self.current_keyspace
+        cf_q = """select "columnfamily" from system.schema_columnfamilies
+                   where "keyspace"=:ks"""
+        self.cursor.execute(cf_q,
+                            {'ks': self.cql_unprotect_name(ksname)},
+                            consistency_level='ONE')
+        return [str(row[0]) for row in self.cursor.fetchall()]
 
     # ===== end cql3-dependent parts =====
 
@@ -1267,12 +1279,13 @@ class Shell(cmd.Cmd):
             out.write("\n  AND strategy_options:%s = %s" % (opname, self.cql_protect_value(opval)))
         out.write(';\n')
 
-        if ksdef.cf_defs:
+        cfnames = self.get_columnfamily_names(ksname)
+        if cfnames:
             out.write('\nUSE %s;\n' % ksname)
-            for cf in ksdef.cf_defs:
+            for cfname in cfnames:
                 out.write('\n')
                 # yes, cf might be looked up again. oh well.
-                self.print_recreate_columnfamily(ksdef.name, cf.name, out)
+                self.print_recreate_columnfamily(ksname, cfname, out)
 
     def print_recreate_columnfamily(self, ksname, cfname, out):
         """
@@ -1415,7 +1428,7 @@ class Shell(cmd.Cmd):
             for k in self.get_keyspaces():
                 print 'Keyspace %s' % (k.name,)
                 print '---------%s\n' % ('-' * len(k.name))
-                cmd.Cmd.columnize(self, [c.name for c in k.cf_defs])
+                cmd.Cmd.columnize(self, self.get_columnfamily_names(k.name))
                 print
         else:
             names = self.get_columnfamily_names(ksname)
