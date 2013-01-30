@@ -237,14 +237,8 @@ public class ClientState
             return;
 
         // only forbid system schema modification.
-        if (!perm.equals(Permission.CREATE) && !perm.equals(Permission.ALTER) && !perm.equals(Permission.DROP))
-            return;
-
-        // allow Auth.AUTH_KS modification (strategy and replication factor) if the user has ALTER permission on it.
-        if (perm.equals(Permission.ALTER) && resource.isKeyspaceLevel() && resource.getKeyspace().equals(Auth.AUTH_KS))
-            return;
-
-        throw new UnauthorizedException(resource.getKeyspace() + " keyspace schema is not user-modifiable.");
+        if (perm.equals(Permission.CREATE) || perm.equals(Permission.ALTER) || perm.equals(Permission.DROP))
+            throw new UnauthorizedException(resource.getKeyspace() + " keyspace schema is not user-modifiable.");
     }
 
 

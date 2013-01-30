@@ -20,9 +20,10 @@ package org.apache.cassandra.config;
  *
  */
 
+import java.util.Map;
+
 import org.apache.cassandra.cache.SerializingCacheProvider;
 import org.apache.cassandra.utils.FBUtilities;
-
 
 public class Config
 {
@@ -32,6 +33,8 @@ public class Config
     public String authorizer;
     public String authority; // left for backwards compatibility - will throw a warning.
     public int permissions_validity_in_ms = 2000;
+    public String auth_replication_strategy = "org.apache.cassandra.locator.SimpleStrategy";
+    public Map<String, String> auth_replication_options;
 
     /* Hashing strategy Random or OPHF */
     public String partitioner;

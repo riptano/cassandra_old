@@ -42,7 +42,6 @@ import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.auth.Auth;
 import org.apache.cassandra.concurrent.DebuggableScheduledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
@@ -699,8 +698,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 Gossiper.instance.replacedEndpoint(current);
             logger_.info("Bootstrap/Replace/Move completed! Now serving reads.");
             assert tokenMetadata_.sortedTokens().size() > 0;
-
-            Auth.setup();
         }
         else
         {
@@ -722,8 +719,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             isSurveyMode = false;
             logger_.info("Leaving write survey mode and joining ring at operator request");
             assert tokenMetadata_.sortedTokens().size() > 0;
-
-            Auth.setup();
         }
     }
 

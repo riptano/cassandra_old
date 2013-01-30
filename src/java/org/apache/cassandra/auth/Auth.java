@@ -17,23 +17,24 @@
  */
 package org.apache.cassandra.auth;
 
-import java.net.InetAddress;
+import java.util.Collections;
 import java.util.concurrent.TimeUnit;
-import java.util.*;
 
-import com.google.common.base.Throwables;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.config.KSMetaData;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
-import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.db.DefsTable;
+import org.apache.cassandra.db.SystemTable;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.*;
-import org.apache.cassandra.utils.FBUtilities;
+
 
 public class Auth
 {
@@ -44,10 +45,6 @@ public class Auth
     // 'system_auth' in 1.2.
     public static final String AUTH_KS = "dse_auth";
     public static final String USERS_CF = "users";
-
-    private static final String AUTH_KS_SCHEMA =
-        String.format("CREATE KEYSPACE %s WITH strategy_class = 'SimpleStrategy' AND strategy_options:replication_factor = 1",
-                      AUTH_KS);
 
     private static final String USERS_CF_SCHEMA =
         String.format("CREATE TABLE %s.%s (name text PRIMARY KEY, super boolean) WITH gc_grace_seconds=864000",
@@ -122,104 +119,27 @@ public class Auth
      */
     public static void setup()
     {
-        // ALL THE HACKS BELOW WILL BE REMOVED ONCE DSP-1379 IS REVERTED
-
-        // Issue: if a node is a seed (or is already bootstrapped), then there is no delay to see the peers.
-        // A fresh new node starts up, sees that it's the only node in the ring and it doesn't yet have dse_auth keyspace.
-        // But by the time that keyspace creation gets to validating schema agreement, its peers are up, and schema versions don't
-        // match, and an SDE is thrown since validateSchemaAgreement() fails.
-        // Solution: add a small delay so that even if the node is a seed, it'll still wait a little for its peers to show
-        // up and sync schema.
-        // Another issue is default superuser setup. We have to check if any users exist, and if not - insert one
-        // ('cassandra'). For this we also need peers to show up.
-        logger.info("Waiting 5 seconds for peers to show up before setting up auth");
-        try
-        {
-            TimeUnit.MILLISECONDS.sleep(5000);
-        }
-        catch (InterruptedException e)
-        {
-            throw new AssertionError(e);
-        }
-
-        // A temporary hack to reduce the possibility of SchemaDisagreementException during auth keyspace and cfs
-        // creation. Not bullet-proof, but arguably Good Enough For Now.
-        if (isSchemaCreatorNode())
-        {
-
-            if (!isSchemaCreated())
-            {
-                logger.info("Creating auth schema");
-                setupAuthKeyspace();
-                setupUsersTable();
-                logger.info("Done creating auth schema");
-            }
-
-            authenticator().setup();
-            authorizer().setup();
-        }
-        else
-        {
-            // avoid excessive log records.
-            if (isSchemaCreated())
-                return;
-
-            logger.info("Waiting for auth schema creation");
-            long deadline = System.currentTimeMillis() + StorageService.RING_DELAY;
-            while (System.currentTimeMillis() < deadline)
-            {
-                try
-                {
-                    TimeUnit.MILLISECONDS.sleep(1000);
-                }
-                catch (InterruptedException e)
-                {
-                    throw new AssertionError(e); // not supposed to happen.
-                }
-
-                if (isSchemaCreated())
-                {
-                    logger.info("Auth schema created");
-                    return;
-                }
-            }
-
-            throw new RuntimeException("Auth setup failed");
-        }
-
+        setupAuthKeyspace();
+        setupUsersTable();
+        authenticator().setup();
+        authorizer().setup();
         setupDefaultSuperuser();
     }
 
     // Create auth keyspace unless it's already been loaded.
     private static void setupAuthKeyspace()
     {
-        if (Schema.instance.getKSMetaData(AUTH_KS) != null)
-            return;
-
-        try
-        {
-            QueryProcessor.processInternal(AUTH_KS_SCHEMA);
-        }
-        catch (Throwable e)
-        {
-            Throwables.propagate(e);
-        }
+        Schema.instance.load(KSMetaData.newKeyspace(AUTH_KS,
+                                                    DatabaseDescriptor.getAuthReplicationStrategy(),
+                                                    DatabaseDescriptor.getAuthReplicationOptions(),
+                                                    true,
+                                                    Collections.EMPTY_LIST));
     }
 
     // Create users table unless it's already been loaded.
     private static void setupUsersTable()
     {
-        if (Schema.instance.getCFMetaData(AUTH_KS, USERS_CF) != null)
-            return;
-
-        try
-        {
-            QueryProcessor.processInternal(USERS_CF_SCHEMA);
-        }
-        catch (Throwable e)
-        {
-            Throwables.propagate(e);
-        }
+        DefsTable.addColumnFamily(CFMetaData.fromCQL3Schema(101, USERS_CF_SCHEMA));
     }
 
     /**
@@ -227,19 +147,48 @@ public class Auth
      */
     private static void setupDefaultSuperuser()
     {
-        try
+        if (Boolean.parseBoolean(System.getProperty("cassandra.write_survey", "false"))
+                || !Boolean.parseBoolean(System.getProperty("cassandra.join_ring", "true"))
+                || StorageService.instance.isClientMode())
+            return;
+
+        final long deadline = System.currentTimeMillis() + StorageService.RING_DELAY;
+
+        final Runnable r = new Runnable()
         {
-            // insert a default superuser if AUTH_KS.USERS_CF is empty.
-            if (QueryProcessor.processInternal(String.format("SELECT * FROM %s.%s", AUTH_KS, USERS_CF)).type.equals(CqlResultType.VOID))
+            public void run()
             {
-                insertUser(DEFAULT_SUPERUSER_NAME, true);
-                logger.info("Created default superuser {}", DEFAULT_SUPERUSER_NAME);
+                // still replaying the commitlog or bootstrapping - reschedule and return.
+                if (!StorageService.instance.isJoined() || !SystemTable.bootstrapComplete())
+                {
+                    StorageService.tasks.schedule(this, 1, TimeUnit.SECONDS);
+                    return;
+                }
+
+                try
+                {
+                    // insert a default superuser if AUTH_KS.USERS_CF is empty.
+                    if (QueryProcessor.processInternal(String.format("SELECT * FROM %s.%s", AUTH_KS, USERS_CF)).type.equals(CqlResultType.VOID))
+                    {
+                        insertUser(DEFAULT_SUPERUSER_NAME, true);
+                        logger.info("Created default superuser {}", DEFAULT_SUPERUSER_NAME);
+                    }
+                }
+                catch (Exception e) // unavaiable or timedout
+                {
+                    if (System.currentTimeMillis() < deadline)
+                    {
+                        // Keep retrying until the deadline arrives.
+                        logger.debug("Failed to create default superuser, will retry in 1 second: {}", e.toString());
+                        StorageService.tasks.schedule(this, 1, TimeUnit.SECONDS);
+                    }
+                    else
+                        logger.warn("Failed to create default superuser: {}", e.toString());
+                }
             }
-        }
-        catch (Throwable e)
-        {
-            logger.warn("Skipping default superuser setup: {}", e.getMessage());
-        }
+        };
+
+        StorageService.tasks.schedule(r, 1, TimeUnit.SECONDS);
     }
 
     // we only worry about one character ('). Make sure it's properly escaped.
@@ -256,24 +205,5 @@ public class Auth
     private static IAuthorizer authorizer()
     {
         return DatabaseDescriptor.getAuthorizer();
-    }
-
-    private static boolean isSchemaCreatorNode()
-    {
-        List<InetAddress> candidates = new ArrayList<InetAddress>(Gossiper.instance.getLiveMembers());
-
-        Collections.sort(candidates, new Comparator<InetAddress>(){
-            public int compare(InetAddress a, InetAddress b)
-            {
-                return a.getHostAddress().compareTo(b.getHostAddress());
-            }
-        });
-
-        return candidates.get(0).equals(FBUtilities.getBroadcastAddress());
-    }
-
-    private static boolean isSchemaCreated()
-    {
-        return Schema.instance.getCFMetaData(AUTH_KS, USERS_CF) != null;
     }
 }

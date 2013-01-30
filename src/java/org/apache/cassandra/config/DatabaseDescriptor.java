@@ -38,10 +38,7 @@ import org.apache.cassandra.db.DefsTable;
 import org.apache.cassandra.db.SystemTable;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.util.FileUtils;
-import org.apache.cassandra.locator.DynamicEndpointSnitch;
-import org.apache.cassandra.locator.EndpointSnitchInfo;
-import org.apache.cassandra.locator.IEndpointSnitch;
-import org.apache.cassandra.locator.SeedProvider;
+import org.apache.cassandra.locator.*;
 import org.apache.cassandra.scheduler.IRequestScheduler;
 import org.apache.cassandra.scheduler.NoScheduler;
 import org.apache.cassandra.service.CacheService;
@@ -71,6 +68,8 @@ public class DatabaseDescriptor
 
     private static IAuthenticator authenticator = new AllowAllAuthenticator();
     private static IAuthorizer authorizer = new AllowAllAuthorizer();
+    private static Class<? extends AbstractReplicationStrategy> auth_replication_strategy;
+    private static Map<String, String> auth_replication_options;
 
     private final static String DEFAULT_CONFIGURATION = "cassandra.yaml";
 
@@ -196,7 +195,7 @@ public class DatabaseDescriptor
 
             /* Authentication and authorization backend, implementing IAuthenticator and IAuthority */
             if (conf.authenticator != null)
-                authenticator = FBUtilities.<IAuthenticator>construct(conf.authenticator, "authenticator");
+                authenticator = FBUtilities.construct(conf.authenticator, "authenticator");
 
 
             if (conf.authority != null)
@@ -208,10 +207,18 @@ public class DatabaseDescriptor
             }
 
             if (conf.authorizer != null)
-                authorizer = FBUtilities.<IAuthorizer>construct(conf.authorizer, "authorizer");
+                authorizer = FBUtilities.construct(conf.authorizer, "authorizer");
 
             authenticator.validateConfiguration();
             authorizer.validateConfiguration();
+
+            auth_replication_strategy = AbstractReplicationStrategy.getClass(conf.auth_replication_strategy);
+
+            auth_replication_options = conf.auth_replication_options == null ? new HashMap<String, String>() : conf.auth_replication_options;
+
+            // A default value for older cassandra.yaml configs and those who don't care about auth.
+            if (auth_replication_strategy == SimpleStrategy.class && auth_replication_options.isEmpty())
+                auth_replication_options.put("replication_factor", "1");
 
             /* Hashing strategy */
             if (conf.partitioner == null)
@@ -582,6 +589,16 @@ public class DatabaseDescriptor
     public static int getPermissionsValidity()
     {
         return conf.permissions_validity_in_ms;
+    }
+
+    public static Class<? extends AbstractReplicationStrategy> getAuthReplicationStrategy()
+    {
+        return auth_replication_strategy;
+    }
+
+    public static Map<String, String> getAuthReplicationOptions()
+    {
+        return auth_replication_options;
     }
 
     public static int getThriftMaxMessageLength()

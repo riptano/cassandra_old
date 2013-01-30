@@ -36,6 +36,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.cql3.CFDefinition;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.cql3.statements.CreateColumnFamilyStatement;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.compaction.AbstractCompactionStrategy;
 import org.apache.cassandra.db.index.SecondaryIndex;
@@ -348,6 +349,22 @@ public final class CFMetaData
                              .compactionStrategyClass(parent.compactionStrategyClass)
                              .compactionStrategyOptions(parent.compactionStrategyOptions)
                              .reloadSecondaryIndexMetadata(parent);
+    }
+
+    /**
+     * @return CFMetaData compiled from the provided CREATE TABLE cql3 schema.
+     */
+    public static CFMetaData fromCQL3Schema(int cfID, String schema)
+    {
+        try
+        {
+            CFMetaData cfm = ((CreateColumnFamilyStatement) QueryProcessor.parseStatement(schema).prepare().statement).getCFMetaData();
+            return copyOpts(new CFMetaData(cfm.ksName, cfm.cfName, cfm.cfType, cfm.comparator, cfm.subcolumnComparator, cfID), cfm);
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException(e);
+        }
     }
 
     public CFMetaData reloadSecondaryIndexMetadata(CFMetaData parent)

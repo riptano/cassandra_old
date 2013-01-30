@@ -45,6 +45,13 @@ authorizer: org.apache.cassandra.auth.AllowAllAuthorizer
 # set to 0 to disable. Will be disabled automatically for AllowAllAuthorizer.
 permissions_validity_in_ms: 2000
 
+# Replication strategy to use for the auth keyspace.
+auth_replication_strategy: org.apache.cassandra.locator.SimpleStrategy
+
+# Replication options to use for the auth keyspace.
+auth_replication_options:
+    replication_factor: 1
+
 # The partitioner is responsible for distributing rows (by key) across
 # nodes in the cluster.  Any IPartitioner may be used, including your
 # own as long as it is on the classpath.  Out of the box, Cassandra

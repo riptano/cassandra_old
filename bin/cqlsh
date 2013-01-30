@@ -772,7 +772,7 @@ class Shell(cmd.Cmd):
     def get_column_names(self, ksname, cfname):
         if ksname is None:
             ksname = self.current_keyspace
-        if not ksname in ('system',) and self.cqlver_atleast(3):
+        if not ksname in ('system','dse_auth') and self.cqlver_atleast(3):
             return self.get_column_names_from_layout(ksname, cfname)
         else:
             return self.get_column_names_from_cfdef(ksname, cfname)
@@ -1301,7 +1301,7 @@ class Shell(cmd.Cmd):
         # no metainfo available from system.schema_* for system CFs, so we have
         # to use cfdef-based description for those.
 
-        if not ksname in ('system',) and self.cqlver_atleast(3):
+        if not ksname in ('system','dse_auth') and self.cqlver_atleast(3):
             try:
                 layout = self.get_columnfamily_layout(ksname, cfname)
             except CQL_ERRORS:
