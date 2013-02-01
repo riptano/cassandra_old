@@ -1,4 +1,5 @@
 1.1.9-dse-2.2.3
+ * fix nodetool repair not fail on node down (CASSANDRA-5203)
  * nodetool: ability to repair specific range (CASSANDRA-5280)
 
 
