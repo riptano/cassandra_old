@@ -40,6 +40,8 @@ public class ListUsersStatement extends AuthenticationStatement
     public CqlResult execute(ClientState state, List<ByteBuffer> variables)
     throws InvalidRequestException, UnavailableException, TimedOutException
     {
-        return QueryProcessor.processInternal(String.format("SELECT * FROM %s.%s", Auth.AUTH_KS, Auth.USERS_CF));
+        return QueryProcessor.processInternal(String.format("SELECT * FROM %s.%s USING CONSISTENCY QUORUM",
+                                                            Auth.AUTH_KS,
+                                                            Auth.USERS_CF));
     }
 }

@@ -262,7 +262,7 @@ public class ClientState
     {
         validateLogin();
         if (user.isAnonymous())
-            throw new UnauthorizedException("You have to be logged in to perform this query");
+            throw new UnauthorizedException("You have to be logged in and not anonymous to perform this query");
     }
 
     private static void validateKeyspace(String keyspace) throws InvalidRequestException
