@@ -213,8 +213,8 @@ public class ClientState
         preventSystemKSSchemaModification(resource, perm);
         if (perm.equals(Permission.SELECT) && READABLE_SYSTEM_RESOURCES.contains(resource))
             return;
-        if (PROTECTED_AUTH_RESOURCES.contains(resource))
-            throw new UnauthorizedException(String.format("Resource %s is inaccessible", resource));
+        if (PROTECTED_AUTH_RESOURCES.contains(resource) && (perm.equals(Permission.CREATE) || perm.equals(Permission.ALTER) || perm.equals(Permission.DROP)))
+            throw new UnauthorizedException(String.format("Can't %s protected %s", perm, resource));
         ensureHasPermission(perm, resource);
     }
 

@@ -99,9 +99,9 @@ public interface IAuthorizer
     void revokeAll(IResource droppedResource);
 
     /**
-     * Set of resources that should be made inaccessible to users and only accessible internally.
+     * Set of resources that should be made protected.
      *
-     * @return Keyspaces, column families that will be unreadable and unmodifiable by users; other resources.
+     * @return Keyspaces, column families that will be unmodifiable (schema) by users; other resources.
      */
     Set<? extends IResource> protectedResources();
 

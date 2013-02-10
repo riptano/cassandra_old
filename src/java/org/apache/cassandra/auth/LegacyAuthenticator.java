@@ -90,4 +90,9 @@ public abstract class LegacyAuthenticator implements IAuthenticator
     public void setup()
     {
     }
+
+    @Override
+    public void setupDefaultUser()
+    {
+    }
 }

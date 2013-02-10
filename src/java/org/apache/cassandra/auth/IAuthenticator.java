@@ -98,9 +98,9 @@ public interface IAuthenticator
     void drop(String username) throws InvalidRequestException;
 
      /**
-     * Set of resources that should be made inaccessible to users and only accessible internally.
+     * Set of resources that should be made protected.
      *
-     * @return Keyspaces, column families that will be unreadable and unmodifiable by users; other resources.
+     * @return Keyspaces, column families that will be unmodifiable (schema) by users; other resources.
      */
     Set<? extends IResource> protectedResources();
 
@@ -117,4 +117,11 @@ public interface IAuthenticator
      * For example, use this method to create any required keyspaces/column families.
      */
     void setup();
+
+    /**
+     * setupDefaultUser is called after the node joins the ring.
+     *
+     * If you store credentials in C*, use this method to setup a default user.
+     */
+    void setupDefaultUser();
 }

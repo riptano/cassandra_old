@@ -74,4 +74,8 @@ public class AllowAllAuthenticator implements IAuthenticator
     public void setup()
     {
     }
+
+    public void setupDefaultUser()
+    {
+    }
 }

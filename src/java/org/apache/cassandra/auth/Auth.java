@@ -31,7 +31,6 @@ import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.db.DefsTable;
-import org.apache.cassandra.db.SystemTable;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.*;
 
@@ -131,7 +130,15 @@ public class Auth
         setupUsersTable();
         authenticator().setup();
         authorizer().setup();
+    }
+
+    /**
+     * Sets up default superuser ('cassandra') and calls authenticator's setupDefaultUser method.
+     */
+    public static void setupDefaultUsers()
+    {
         setupDefaultSuperuser();
+        authenticator().setupDefaultUser();
     }
 
     // Create auth keyspace unless it's already been loaded.
@@ -155,24 +162,10 @@ public class Auth
      */
     private static void setupDefaultSuperuser()
     {
-        if (Boolean.parseBoolean(System.getProperty("cassandra.write_survey", "false"))
-                || !Boolean.parseBoolean(System.getProperty("cassandra.join_ring", "true"))
-                || StorageService.instance.isClientMode())
-            return;
-
-        final long deadline = System.currentTimeMillis() + StorageService.RING_DELAY;
-
-        final Runnable r = new Runnable()
+        Runnable setup = new Runnable()
         {
             public void run()
             {
-                // still replaying the commitlog or bootstrapping - reschedule and return.
-                if (!StorageService.instance.isJoined() || !SystemTable.bootstrapComplete())
-                {
-                    StorageService.tasks.schedule(this, 1, TimeUnit.SECONDS);
-                    return;
-                }
-
                 try
                 {
                     // insert a default superuser if AUTH_KS.USERS_CF is empty.
@@ -186,21 +179,14 @@ public class Auth
                         logger.info("Created default superuser {}", DEFAULT_SUPERUSER_NAME);
                     }
                 }
-                catch (Exception e) // unavaiable or timedout
+                catch (Throwable e) // unavaiable or timedout
                 {
-                    if (System.currentTimeMillis() < deadline)
-                    {
-                        // Keep retrying until the deadline arrives.
-                        logger.debug("Failed to create default superuser, will retry in 1 second: {}", e.toString());
-                        StorageService.tasks.schedule(this, 1, TimeUnit.SECONDS);
-                    }
-                    else
-                        logger.warn("Failed to create default superuser: {}", e.toString());
+                    logger.warn("Skipped creating default superuser: {}", e.toString());
                 }
             }
         };
 
-        StorageService.tasks.schedule(r, SUPERUSER_SETUP_DELAY, TimeUnit.SECONDS);
+        StorageService.tasks.schedule(setup, SUPERUSER_SETUP_DELAY, TimeUnit.SECONDS);
     }
 
     // we only worry about one character ('). Make sure it's properly escaped.
