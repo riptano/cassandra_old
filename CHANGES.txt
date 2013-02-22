@@ -1,9 +1,11 @@
 1.1.9-dse-2.2.3
  * Fix possible assertion triggered in SliceFromReadCommand (CASSANDRA-5284)
+ * nodetool: ability to repair specific range (CASSANDRA-5280)
 
 1.1.9-dse-2.2.2
  * Pulled in fix for CASSANDRA-5168
  * Adjusted build system for deployment to our own maven repo
+
 
 1.1.9
  * Simplify CompressedRandomAccessReader to work around JDK FD bug (CASSANDRA-5088)
