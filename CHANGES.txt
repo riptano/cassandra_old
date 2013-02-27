@@ -6,6 +6,7 @@ DSE backports/cherry-picks
    (CASSANDRA-5397)
  * Ensure that PerRowSecondaryIndex is notified of row-level deletes
    (CASSANDRA-5445)
+ * Don't lowercase property map keys (this breaks NTS) (CASSANDRA-5292)
 
 1.2.2
  * fix potential for multiple concurrent compactions of the same sstables
