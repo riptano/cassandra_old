@@ -169,7 +169,7 @@ public class AntiEntropyService
                 throw new IllegalArgumentException("Requested range intersects a local range but is not fully contained in one; this would lead to imprecise repair");
             }
         }
-        if (rangeSuperSet == null || !replicaSets.containsKey(toRepair))
+        if (rangeSuperSet == null || !replicaSets.containsKey(rangeSuperSet))
             return Collections.emptySet();
 
         Set<InetAddress> neighbors = new HashSet<InetAddress>(replicaSets.get(rangeSuperSet));
@@ -687,9 +687,10 @@ public class AntiEntropyService
             {
                 if (!FailureDetector.instance.isAlive(endpoint))
                 {
+                    String message = String.format("Cannot proceed on repair because a neighbor (%s) is dead: session failed", endpoint);
                     differencingDone.signalAll();
-                    logger.info(String.format("[repair #%s] Cannot proceed on repair because a neighbor (%s) is dead: session failed", getName(), endpoint));
-                    return;
+                    logger.error(String.format("[repair #%s] ", getName()) + message);
+                    throw new IOException(message);
                 }
 
                 if (Gossiper.instance.getVersion(endpoint) < MessagingService.VERSION_11 && isSequential)
