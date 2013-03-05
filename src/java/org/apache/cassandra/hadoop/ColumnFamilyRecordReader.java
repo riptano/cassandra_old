@@ -139,7 +139,9 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
         predicate = ConfigHelper.getInputSlicePredicate(conf);
         boolean widerows = ConfigHelper.getInputIsWide(conf);
         isEmptyPredicate = isEmptyPredicate(predicate);
-        totalRowCount = (int) this.split.getLength();
+        totalRowCount = (this.split.getLength() < Long.MAX_VALUE)
+                ? (int) this.split.getLength()
+                : ConfigHelper.getInputSplitSize(conf);
         batchSize = ConfigHelper.getRangeBatchSize(conf);
         cfName = ConfigHelper.getInputColumnFamily(conf);
         consistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
