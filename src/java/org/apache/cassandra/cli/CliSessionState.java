@@ -47,12 +47,8 @@ public class CliSessionState
     public boolean verbose = false; // verbose output
     public int     schema_mwt = 10 * 1000;    // Schema migration wait time (secs.)
     public TTransportFactory transportFactory = new FramedTransportFactory();
-<<<<<<< HEAD
     public EncryptionOptions encOptions = new ClientEncryptionOptions();
-
-=======
     public TClientSocketFactory clientSocketFactory = new TClientSocketFactory();
->>>>>>> 3a360f7... add client socket factory
 
     /*
      * Streams to read/write from

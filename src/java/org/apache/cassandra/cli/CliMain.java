@@ -111,8 +111,7 @@ public class CliMain
                 sessionState.err.println("Exception during authentication to the cassandra node, " +
                                          "Verify the keyspace exists, and that you are using the correct credentials.");
 
-                if (sessionState.debug)
-                    e.printStackTrace(sessionState.err);
+                e.printStackTrace(sessionState.err);
                 return;
             }
             catch (AuthorizationException e)
