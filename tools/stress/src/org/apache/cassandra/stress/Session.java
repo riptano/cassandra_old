@@ -24,6 +24,8 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import com.yammer.metrics.Metrics;
 import com.yammer.metrics.core.Histogram;
@@ -107,13 +109,7 @@ public class Session implements Serializable
         availableOptions.addOption("Q",  "query-names",          true,   "Comma-separated list of column names to retrieve from each row.");
         availableOptions.addOption("Z",  "compaction-strategy",  true,   "CompactionStrategy to use.");
         availableOptions.addOption("U",  "comparator",           true,   "Column Comparator to use. Currently supported types are: TimeUUIDType, AsciiType, UTF8Type.");
-        availableOptions.addOption("tf", "transport-factory",    true,   "Fully-qualified TTransportFactory class name for creating a connection. Note: For Thrift over SSL, use org.apache.cassandra.stress.SSLTransportFactory.");
-        availableOptions.addOption("ts", SSL_TRUSTSTORE,         true, "SSL: full path to truststore");
-        availableOptions.addOption("tspw", SSL_TRUSTSTORE_PW,    true, "SSL: full path to truststore");
-        availableOptions.addOption("prtcl", SSL_PROTOCOL,        true, "SSL: connections protocol to use (default: TLS)");
-        availableOptions.addOption("alg", SSL_ALGORITHM,         true, "SSL: algorithm (default: SunX509)");
-        availableOptions.addOption("st", SSL_STORE_TYPE,         true, "SSL: type of store");
-        availableOptions.addOption("ciphers", SSL_CIPHER_SUITES, true, "SSL: comma-separated list of encryption suites to use");
+        availableOptions.addOption("tr", "transport factory",    true,   "Name of the transport factory for connecting to Cassandra, defaults to: org.apache.cassandra.thrift.TFramedTransportFactory.");
     }
 
     private int numKeys          = 1000 * 1000;
@@ -138,6 +134,8 @@ public class Session implements Serializable
     private boolean enable_cql    = false;
     private boolean use_prepared  = false;
     private boolean trace         = false;
+    
+    private String transportFactory = "org.apache.cassandra.thrift.TFramedTransportFactory";
 
     private final String outFileName;
 
@@ -164,7 +162,6 @@ public class Session implements Serializable
     public final boolean timeUUIDComparator;
     public double traceProbability = 0.0;
     public EncryptionOptions encOptions = new ClientEncryptionOptions();
-    public TTransportFactory transportFactory = new FramedTransportFactory();
 
     public Session(String[] arguments) throws IllegalArgumentException, SyntaxException
     {
@@ -404,27 +401,23 @@ public class Session implements Serializable
                 comparator = null;
                 timeUUIDComparator = false;
             }
-
-            if(cmd.hasOption(SSL_TRUSTSTORE))
-                encOptions.truststore = cmd.getOptionValue(SSL_TRUSTSTORE);
-
-            if(cmd.hasOption(SSL_TRUSTSTORE_PW))
-                encOptions.truststore_password = cmd.getOptionValue(SSL_TRUSTSTORE_PW);
-
-            if(cmd.hasOption(SSL_PROTOCOL))
-                encOptions.protocol = cmd.getOptionValue(SSL_PROTOCOL);
-
-            if(cmd.hasOption(SSL_ALGORITHM))
-                encOptions.algorithm = cmd.getOptionValue(SSL_ALGORITHM);
-
-            if(cmd.hasOption(SSL_STORE_TYPE))
-                encOptions.store_type = cmd.getOptionValue(SSL_STORE_TYPE);
-
-            if(cmd.hasOption(SSL_CIPHER_SUITES))
-                encOptions.cipher_suites = cmd.getOptionValue(SSL_CIPHER_SUITES).split(",");
-
-            if (cmd.hasOption("tf"))
-                transportFactory = validateAndSetTransportFactory(cmd.getOptionValue("tf"));
+            
+            if (cmd.hasOption("tr"))
+            {
+                transportFactory = cmd.getOptionValue("tr");
+                try
+                {
+                    if (transportFactory == null || !ITransportFactory.class.isAssignableFrom(Class.forName(transportFactory)))
+                    {
+                        System.err.println("Not a valid transport factory: " + transportFactory);
+                        System.exit(1);
+                    }
+                } catch (ClassNotFoundException ex)
+                {
+                    System.err.println("Not a valid transport factory: " + transportFactory);
+                    System.exit(1);
+                }
+            }
 
         }
         catch (ParseException e)
@@ -696,38 +689,45 @@ public class Session implements Serializable
      * @param setKeyspace - should we set keyspace for client or not
      * @return cassandra client connection
      */
-    public CassandraClient getClient(boolean setKeyspace)
+    public synchronized CassandraClient getClient(boolean setKeyspace)
     {
         // random node selection for fake load balancing
         String currentNode = nodes[Stress.randomizer.nextInt(nodes.length)];
 
-        TSocket socket = new TSocket(currentNode, port);
-        TTransport transport = transportFactory.getTransport(socket);
-        CassandraClient client = new CassandraClient(new TBinaryProtocol(transport));
-
         try
         {
-            if(!transport.isOpen())
+            TSocket socket = new TSocket(currentNode, port);
+            TTransport transport = null;
+            if (!isUnframed())
+            {
+                ITransportFactory factory = (ITransportFactory) Class.forName(transportFactory).newInstance();
+                transport = factory.openTransport(socket);
+            } else
+            {
+                transport = socket;
+            }
+            if (!transport.isOpen())
+            {
                 transport.open();
+            }
+            
+            CassandraClient client = new CassandraClient(new TBinaryProtocol(transport));
 
-            if (enable_cql)
-                client.set_cql_version(cqlVersion);
 
             if (setKeyspace)
             {
                 client.set_keyspace("Keyspace1");
             }
-        }
-        catch (InvalidRequestException e)
+            
+            return client;
+
+        } catch (InvalidRequestException e)
         {
             throw new RuntimeException(e.getWhy());
-        }
-        catch (Exception e)
+        } catch (Exception e)
         {
             throw new RuntimeException(e.getMessage());
         }
-
-        return client;
     }
 
     public static InetAddress getLocalAddress()
