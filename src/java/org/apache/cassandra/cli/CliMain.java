@@ -55,7 +55,20 @@ public class CliMain
      */
     public static void connect(String server, int port)
     {
-        TSocket socket = new TSocket(server, port);
+        
+        TSocket socket = null;
+        
+        try 
+        {
+            socket = sessionState.clientSocketFactory.getTSocket(server, port);
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace(sessionState.err);
+
+            String error = (e.getCause() == null) ? e.getMessage() : e.getCause().getMessage();
+            throw new RuntimeException("Exception creating spcket to " + server + "/" + port + ". Reason: " + error + ".");
+        }
 
         if (transport != null)
             transport.close();
@@ -97,6 +110,9 @@ public class CliMain
                 thriftClient = null;
                 sessionState.err.println("Exception during authentication to the cassandra node, " +
                                          "Verify the keyspace exists, and that you are using the correct credentials.");
+
+                if (sessionState.debug)
+                    e.printStackTrace(sessionState.err);
                 return;
             }
             catch (AuthorizationException e)
