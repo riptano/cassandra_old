@@ -140,7 +140,7 @@ public class ColumnFamilyOutputFormat extends OutputFormat<ByteBuffer,List<Mutat
      * @throws Exception set of thrown exceptions may be implementation defined,
      *                   depending on the used transport factory
      */
-    public static Cassandra.Client createAuthenticatedClient(String host, int port, Configuration conf) throws Exception
+    public static ClientHolder createAuthenticatedClient(String host, int port, Configuration conf) throws Exception
     {
         logger.debug("Creating authenticated client for CF output format");
         TTransport transport = ConfigHelper.getClientTransportFactory(conf).openTransport(host, port);
@@ -156,7 +156,7 @@ public class ColumnFamilyOutputFormat extends OutputFormat<ByteBuffer,List<Mutat
             client.login(authRequest);
         }
         logger.debug("Authenticated client for CF output format created successfully");
-        return client;
+        return new ClientHolder(client, transport);
     }
 
     /**
