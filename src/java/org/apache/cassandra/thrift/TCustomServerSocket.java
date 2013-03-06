@@ -70,16 +70,10 @@ public class TCustomServerSocket extends TServerTransport
             if (ctx != null)
             {           
                 // Make ssl server socket            
-<<<<<<< HEAD
                 serverSocket = (SSLServerSocket)ctx.getServerSocketFactory().createServerSocket();
                 serverSocket.setReuseAddress(true);
-                ((SSLServerSocket) serverSocket).setEnabledCipherSuites(suites);
-=======
-                serverSocket_ = (SSLServerSocket)ctx.getServerSocketFactory().createServerSocket();
-                serverSocket_.setReuseAddress(true);
-                String[] suits = SSLFactory.filterCipherSuites(((SSLServerSocket)serverSocket_).getSupportedCipherSuites(), suites);
-                ((SSLServerSocket) serverSocket_).setEnabledCipherSuites(suits);
->>>>>>> de4c8f2... Cassandra-4609
+                String[] suits = SSLFactory.filterCipherSuites(((SSLServerSocket)serverSocket).getSupportedCipherSuites(), suites);
+                ((SSLServerSocket) serverSocket).setEnabledCipherSuites(suits);
             }
             else
             {

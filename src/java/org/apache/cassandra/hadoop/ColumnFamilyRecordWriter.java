@@ -52,8 +52,6 @@ import org.apache.thrift.transport.TSocket;
  * </p>
  *
  * @see ColumnFamilyOutputFormat
- * @see OutputFormat
- *
  */
 final class ColumnFamilyRecordWriter extends RecordWriter<ByteBuffer,List<Mutation>>
 implements org.apache.hadoop.mapred.RecordWriter<ByteBuffer,List<Mutation>>
@@ -320,8 +318,9 @@ implements org.apache.hadoop.mapred.RecordWriter<ByteBuffer,List<Mutation>>
                     try
                     {
                         InetAddress address = iter.next();
-                        thriftSocket = new TSocket(address.getHostName(), ConfigHelper.getOutputRpcPort(conf));
-                        thriftClient = ColumnFamilyOutputFormat.createAuthenticatedClient(thriftSocket, conf);
+                        String host = address.getHostName();
+                        int port = ConfigHelper.getOutputRpcPort(conf);
+                        thriftClient = ColumnFamilyOutputFormat.createAuthenticatedClient(host, port, conf);
                     }
                     catch (Exception e)
                     {
