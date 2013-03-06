@@ -23,6 +23,7 @@ import java.io.PrintStream;
 import org.apache.cassandra.cli.transport.FramedTransportFactory;
 import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ClientEncryptionOptions;
+import org.apache.cassandra.thrift.TClientFactory;
 import org.apache.cassandra.thrift.TClientSocketFactory;
 import org.apache.cassandra.tools.NodeProbe;
 import org.apache.thrift.transport.TTransportFactory;
@@ -48,7 +49,7 @@ public class CliSessionState
     public int     schema_mwt = 10 * 1000;    // Schema migration wait time (secs.)
     public TTransportFactory transportFactory = new FramedTransportFactory();
     public EncryptionOptions encOptions = new ClientEncryptionOptions();
-    public TClientSocketFactory clientSocketFactory = new TClientSocketFactory();
+    public TClientFactory clientSocketFactory = new TClientSocketFactory();
 
     /*
      * Streams to read/write from

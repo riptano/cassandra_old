@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.cli;
 
+import org.apache.cassandra.thrift.TClientFactory;
 import org.apache.cassandra.thrift.TClientSocketFactory;
 import org.apache.commons.cli.*;
 import org.apache.thrift.transport.TTransportFactory;
@@ -266,17 +267,17 @@ public class CliOptions
         }
     }
     
-    private static TClientSocketFactory validateAndSetClientSocketFactory(String clientSocketFactory)
+    private static TClientFactory validateAndSetClientSocketFactory(String clientSocketFactory)
     {
         try
         {
             Class factory = Class.forName(clientSocketFactory);
 
-            if(!TTransportFactory.class.isAssignableFrom(factory))
+            if(!TClientFactory.class.isAssignableFrom(factory))
                 throw new IllegalArgumentException(String.format("transport factory '%s' " +
-                                                                 "not derived from TClientSocketFactory", clientSocketFactory));
+                                                                 "not derived from TClientFactory", clientSocketFactory));
 
-            return (TClientSocketFactory) factory.newInstance();
+            return (TClientFactory) factory.newInstance();
         }
         catch (Exception e)
         {
