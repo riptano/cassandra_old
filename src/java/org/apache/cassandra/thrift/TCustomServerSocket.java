@@ -30,6 +30,7 @@ import javax.net.ssl.SSLServerSocket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.security.SSLFactory;
 import org.apache.thrift.transport.TServerTransport;
 import org.apache.thrift.transport.TTransportException;
 
@@ -69,9 +70,16 @@ public class TCustomServerSocket extends TServerTransport
             if (ctx != null)
             {           
                 // Make ssl server socket            
+<<<<<<< HEAD
                 serverSocket = (SSLServerSocket)ctx.getServerSocketFactory().createServerSocket();
                 serverSocket.setReuseAddress(true);
                 ((SSLServerSocket) serverSocket).setEnabledCipherSuites(suites);
+=======
+                serverSocket_ = (SSLServerSocket)ctx.getServerSocketFactory().createServerSocket();
+                serverSocket_.setReuseAddress(true);
+                String[] suits = SSLFactory.filterCipherSuites(((SSLServerSocket)serverSocket_).getSupportedCipherSuites(), suites);
+                ((SSLServerSocket) serverSocket_).setEnabledCipherSuites(suits);
+>>>>>>> de4c8f2... Cassandra-4609
             }
             else
             {

@@ -48,6 +48,7 @@ public class CliSessionState
     public TTransportFactory transportFactory = new FramedTransportFactory();
     public EncryptionOptions encOptions = new ClientEncryptionOptions();
 
+
     /*
      * Streams to read/write from
      */
