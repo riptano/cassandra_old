@@ -691,7 +691,7 @@ completer_for('alterInstructions', 'optval') \
     (create_cf_option_val_completer)
 
 syntax_rules += r'''
-<username> ::= user=( <identifier> | <stringLiteral> )
+<username> ::= name=( <identifier> | <stringLiteral> )
              ;
 
 <createUserStatement> ::= "CREATE" "USER" <username>
@@ -710,6 +710,21 @@ syntax_rules += r'''
 <listUsersStatement> ::= "LIST" "USERS"
                        ;
 '''
+
+@completer_for('username', 'name')
+def username_name_completer(ctxt, cass):
+    def maybe_quote(name):
+        if CqlRuleSet.is_valid_cql3_name(name):
+            return name
+        return "'%s'" % name
+
+    # disable completion for CREATE USER.
+    if ctxt.matched[0][0] == 'K_CREATE':
+        return [Hint('<username>')]
+
+    cursor = cass.conn.cursor()
+    cursor.execute("LIST USERS")
+    return [maybe_quote(row[0].replace("'", "''")) for row in cursor.fetchall()]
 
 syntax_rules += r'''
 <grantStatement> ::= "GRANT" <permissionExpr> "ON" <resource> "TO" <username>
