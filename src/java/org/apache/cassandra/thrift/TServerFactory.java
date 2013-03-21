@@ -43,6 +43,6 @@ public interface TServerFactory
         public Integer recvBufferSize;
         public boolean keepAlive;
         public SSLContext ctx;
-        public String[] cipherSuits;
+        public String[] cipherSuites;
     }
 }
