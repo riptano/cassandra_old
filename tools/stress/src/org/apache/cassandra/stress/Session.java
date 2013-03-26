@@ -57,6 +57,12 @@ public class Session implements Serializable
     public final AtomicInteger operations = new AtomicInteger();
     public final AtomicInteger keys = new AtomicInteger();
     public final com.yammer.metrics.core.Timer latency = Metrics.newTimer(Session.class, "latency");
+    private static final String SSL_TRUSTSTORE = "truststore";
+    private static final String SSL_TRUSTSTORE_PW = "truststore-password";
+    private static final String SSL_PROTOCOL = "ssl-protocol";
+    private static final String SSL_ALGORITHM = "ssl-alg";
+    private static final String SSL_STORE_TYPE = "store-type";
+    private static final String SSL_CIPHER_SUITES = "ssl-ciphers";
 
     static
     {
@@ -96,11 +102,15 @@ public class Session implements Serializable
         availableOptions.addOption("Q",  "query-names",          true,   "Comma-separated list of column names to retrieve from each row.");
         availableOptions.addOption("Z",  "compaction-strategy",  true,   "CompactionStrategy to use.");
         availableOptions.addOption("U",  "comparator",           true,   "Column Comparator to use. Currently supported types are: TimeUUIDType, AsciiType, UTF8Type.");
-        availableOptions.addOption(
-                TClientTransportFactory.SHORT_OPTION,
-                TClientTransportFactory.LONG_OPTION,             true,   "Name of the transport factory for connecting to Cassandra, defaults to: org.apache.cassandra.thrift.TFramedTransportFactory.");
+        availableOptions.addOption("tf", "transport-factory",    true,   "Fully-qualified TTransportFactory class name for creating a connection. Note: For Thrift over SSL, use org.apache.cassandra.stress.SSLTransportFactory.");
+        availableOptions.addOption("ts", SSL_TRUSTSTORE,         true, "SSL: full path to truststore");
+        availableOptions.addOption("tspw", SSL_TRUSTSTORE_PW,    true, "SSL: full path to truststore");
+        availableOptions.addOption("prtcl", SSL_PROTOCOL,        true, "SSL: connections protocol to use (default: TLS)");
+        availableOptions.addOption("alg", SSL_ALGORITHM,         true, "SSL: algorithm (default: SunX509)");
+        availableOptions.addOption("st", SSL_STORE_TYPE,         true, "SSL: type of store");
+        availableOptions.addOption("ciphers", SSL_CIPHER_SUITES, true, "SSL: comma-separated list of encryption suites to use");
     }
-
+    
     private int numKeys          = 1000 * 1000;
     private int numDifferentKeys = numKeys;
     private float skipKeys       = 0;

@@ -60,7 +60,6 @@ public class CliMain
         }
         catch (Exception e)
         {
-            e.printStackTrace(sessionState.err);
             String error = (e.getCause() == null) ? e.getMessage() : e.getCause().getMessage();
             throw new RuntimeException("Exception opening transport to " + server + "/" + port + ". Reason: " + error + ".");
         }
@@ -189,7 +188,7 @@ public class CliMain
         completer.setCandidateStrings(strs);
     }
 
-    public static void processStatement(String query) throws CharacterCodingException, ClassNotFoundException, TException, TimedOutException, NotFoundException, InvalidRequestException, NoSuchFieldException, UnavailableException, IllegalAccessException, InstantiationException, SchemaDisagreementException
+    public static void processStatement(String query) throws CharacterCodingException, ClassNotFoundException, TException, TimedOutException, NotFoundException, InvalidRequestException, NoSuchFieldException, UnavailableException, IllegalAccessException, InstantiationException
     {
         cliClient.executeCLIStatement(query);
     }

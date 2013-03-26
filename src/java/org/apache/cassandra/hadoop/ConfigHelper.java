@@ -566,7 +566,8 @@ public class ConfigHelper
         return client;
     }
 
-    public static Cassandra.Client createConnection(Configuration conf, String host, Integer port) throws IOException
+    public static Cassandra.Client createConnection(Configuration conf, String host, Integer port)
+            throws IOException
     {
         try
         {
