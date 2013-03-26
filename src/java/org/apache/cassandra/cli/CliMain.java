@@ -30,7 +30,6 @@ import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.thrift.*;
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TBinaryProtocol;
-import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
 
 /**
@@ -55,29 +54,18 @@ public class CliMain
      */
     public static void connect(String server, int port)
     {
-        TSocket socket = new TSocket(server, port);
-
-        if (transport != null)
-            transport.close();
-
-        transport = sessionState.transportFactory.getTransport(socket);
-        TBinaryProtocol binaryProtocol = new TBinaryProtocol(transport, true, true);
-        Cassandra.Client cassandraClient = new Cassandra.Client(binaryProtocol);
-
-        try
+        try 
         {
-            if (!transport.isOpen())
-                transport.open();
+            transport = sessionState.transportFactory.openTransport(server, port);
         }
         catch (Exception e)
         {
-            e.printStackTrace(sessionState.err);
-
             String error = (e.getCause() == null) ? e.getMessage() : e.getCause().getMessage();
-            throw new RuntimeException("Exception connecting to " + server + "/" + port + ". Reason: " + error + ".");
+            throw new RuntimeException("Exception opening transport to " + server + "/" + port + ". Reason: " + error + ".");
         }
 
-        thriftClient = cassandraClient;
+        TBinaryProtocol binaryProtocol = new TBinaryProtocol(transport, true, true);
+        thriftClient = new Cassandra.Client(binaryProtocol);
         cliClient = new CliClient(sessionState, thriftClient);
 
         if ((sessionState.username != null) && (sessionState.password != null))
@@ -97,6 +85,8 @@ public class CliMain
                 thriftClient = null;
                 sessionState.err.println("Exception during authentication to the cassandra node, " +
                                          "Verify the keyspace exists, and that you are using the correct credentials.");
+
+                e.printStackTrace(sessionState.err);
                 return;
             }
             catch (AuthorizationException e)
@@ -117,7 +107,7 @@ public class CliMain
         {
             try
             {
-                sessionState.keyspace = CliCompiler.getKeySpace(sessionState.keyspace, thriftClient.describe_keyspaces());;
+                sessionState.keyspace = CliCompiler.getKeySpace(sessionState.keyspace, thriftClient.describe_keyspaces());
                 thriftClient.set_keyspace(sessionState.keyspace);
                 cliClient.setKeySpace(sessionState.keyspace);
                 updateCompletor(CliUtils.getCfNamesByKeySpace(cliClient.getKSMetaData(sessionState.keyspace)));
