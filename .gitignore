@@ -1,6 +1,0 @@
-.idea/
-build/
-out/
-src/gen-java/
-*.iml
-pylib/cqlshlib/*.pyc
