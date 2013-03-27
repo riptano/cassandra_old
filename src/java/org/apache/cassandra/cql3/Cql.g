@@ -211,11 +211,12 @@ useStatement returns [UseStatement stmt]
 selectStatement returns [SelectStatement.RawStatement expr]
     @init {
         boolean isCount = false;
+        boolean isDistinct = false;
         int limit = Integer.MAX_VALUE;
         Map<ColumnIdentifier, Boolean> orderings = new LinkedHashMap<ColumnIdentifier, Boolean>();
         boolean allowFiltering = false;
     }
-    : K_SELECT ( sclause=selectClause | (K_COUNT '(' sclause=selectCountClause ')' { isCount = true; }) )
+    : K_SELECT ( sclause=selectClause | (K_COUNT '(' sclause=selectCountClause ')' { isCount = true; }) | (K_DISTINCT sclause=selectDistinctClause { isDistinct = true; }) )
       K_FROM cf=columnFamilyName
       ( K_WHERE wclause=whereClause )?
       ( K_ORDER K_BY orderByClause[orderings] ( ',' orderByClause[orderings] )* )?
@@ -225,7 +226,8 @@ selectStatement returns [SelectStatement.RawStatement expr]
           SelectStatement.Parameters params = new SelectStatement.Parameters(limit,
                                                                              orderings,
                                                                              isCount,
-                                                                             allowFiltering);
+                                                                             allowFiltering,
+                                                                             isDistinct);
           $expr = new SelectStatement.RawStatement(cf, params, sclause, wclause);
       }
     ;
@@ -252,6 +254,10 @@ selector returns [RawSelector s]
 selectCountClause returns [List<RawSelector> expr]
     : '\*'           { $expr = Collections.<RawSelector>emptyList();}
     | i=INTEGER      { if (!i.getText().equals("1")) addRecognitionError("Only COUNT(1) is supported, got COUNT(" + i.getText() + ")"); $expr = Collections.<RawSelector>emptyList();}
+    ;
+
+selectDistinctClause returns [List<RawSelector> expr]
+    : t1=selector { $expr = new ArrayList<RawSelector>(); $expr.add(t1); }
     ;
 
 whereClause returns [List<Relation> clause]
@@ -868,7 +874,7 @@ username
 
 unreserved_keyword returns [String str]
     : u=unreserved_function_keyword     { $str = u; }
-    | k=(K_TTL | K_COUNT | K_WRITETIME) { $str = $k.text; }
+    | k=(K_TTL | K_COUNT | K_DISTINCT | K_WRITETIME) { $str = $k.text; }
     ;
 
 unreserved_function_keyword returns [String str]
@@ -909,6 +915,7 @@ K_LIMIT:       L I M I T;
 K_USING:       U S I N G;
 K_USE:         U S E;
 K_COUNT:       C O U N T;
+K_DISTINCT:    D I S T I N C T;
 K_SET:         S E T;
 K_BEGIN:       B E G I N;
 K_UNLOGGED:    U N L O G G E D;
