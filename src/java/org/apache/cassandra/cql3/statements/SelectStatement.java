@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.statements;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.Selector;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 
@@ -229,7 +230,7 @@ public class SelectStatement implements CQLStatement
                                      getKeyBounds(variables),
                                      expressions,
                                      getLimit(),
-                                     true,
+                                     !parameters.isDistinct /* countCQL3Rows */,
                                      false);
     }
 
@@ -280,7 +281,11 @@ public class SelectStatement implements CQLStatement
     private IDiskAtomFilter makeFilter(List<ByteBuffer> variables)
     throws InvalidRequestException
     {
-        if (isColumnRange())
+        if (parameters.isDistinct)
+        {
+            return new SliceQueryFilter(new ColumnSlice[]{ ColumnSlice.ALL_COLUMNS }, isReversed, 1, -1, -1);
+        }
+        else if (isColumnRange())
         {
             // For sparse, we used to ask for 'defined columns' * 'asked limit' (where defined columns includes the row marker)
             // to account for the grouping of columns.
@@ -703,21 +708,32 @@ public class SelectStatement implements CQLStatement
             }
             else if (cfDef.isComposite)
             {
-                // Sparse case: group column in cqlRow when composite prefix is equal
-                CompositeType composite = (CompositeType)cfDef.cfm.comparator;
-
-                ColumnGroupMap.Builder builder = new ColumnGroupMap.Builder(composite, cfDef.hasCollections);
-
-                for (Column c : row.cf)
+                if (parameters.isDistinct)
                 {
-                    if (c.isMarkedForDelete())
+                    // Skip deleted rows
+                    if (row.cf.getColumnCount() == 0)
                         continue;
 
-                    builder.add(c);
+                    result.newRow();
+                    result.add(row.key.key);
                 }
+                else {
+                    // Sparse case: group column in cqlRow when composite prefix is equal
+                    CompositeType composite = (CompositeType)cfDef.cfm.comparator;
 
-                for (ColumnGroupMap group : builder.groups())
-                    handleGroup(selection, result, row.key.key, keyComponents, group);
+                    ColumnGroupMap.Builder builder = new ColumnGroupMap.Builder(composite, cfDef.hasCollections);
+
+                    for (Column c : row.cf)
+                    {
+                        if (c.isMarkedForDelete())
+                            continue;
+
+                        builder.add(c);
+                    }
+
+                    for (ColumnGroupMap group : builder.groups())
+                        handleGroup(selection, result, row.key.key, keyComponents, group);
+                }
             }
             else
             {
@@ -907,6 +923,25 @@ public class SelectStatement implements CQLStatement
                                 : Selection.fromSelectors(cfDef, selectClause);
 
             SelectStatement stmt = new SelectStatement(cfDef, getBoundsTerms(), parameters, selection);
+
+
+            if (parameters.isDistinct)
+            {
+                // there should be only one selector from the parser
+//                if (selection.getColumnsList().isEmpty())
+//                    throw new InvalidRequestException(String.format("Undefined name %s in selection clause", t.id()));
+//
+//                for (RawSelector t : selectClause)
+//                {
+//                    CFDefinition.Name name = cfDef.get(t.id());
+//                    if (name == null)
+//                        throw new InvalidRequestException(String.format("Undefined name %s in selection clause", t.id()));
+//                    if (name.kind != CFDefinition.Name.Kind.KEY_ALIAS)
+//                        throw new InvalidRequestException(String.format("Name %s must be the partition key", name));
+//
+//                    stmt.selectedNames.add(Pair.create(name, t));
+//                }
+            }
 
             /*
              * WHERE clause. For a given entity, rules are:
@@ -1219,11 +1254,12 @@ public class SelectStatement implements CQLStatement
         @Override
         public String toString()
         {
-            return String.format("SelectRawStatement[name=%s, selectClause=%s, whereClause=%s, isCount=%s, limit=%s]",
+            return String.format("SelectRawStatement[name=%s, selectClause=%s, whereClause=%s, isCount=%s, isDistinct=%s, limit=%s]",
                     cfName,
                     selectClause,
                     whereClause,
                     parameters.isCount,
+                    parameters.isDistinct,
                     parameters.limit);
         }
     }
@@ -1374,13 +1410,15 @@ public class SelectStatement implements CQLStatement
         private final int limit;
         private final Map<ColumnIdentifier, Boolean> orderings;
         private final boolean isCount;
+        private final boolean isDistinct;
         private final boolean allowFiltering;
 
-        public Parameters(int limit, Map<ColumnIdentifier, Boolean> orderings, boolean isCount, boolean allowFiltering)
+        public Parameters(int limit, Map<ColumnIdentifier, Boolean> orderings, boolean isCount, boolean allowFiltering, boolean isDistinct)
         {
             this.limit = limit;
             this.orderings = orderings;
             this.isCount = isCount;
+            this.isDistinct = isDistinct;
             this.allowFiltering = allowFiltering;
         }
     }
