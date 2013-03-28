@@ -24,9 +24,13 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocket;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.security.SSLFactory;
 import org.apache.thrift.transport.TServerTransport;
 import org.apache.thrift.transport.TTransportException;
 
@@ -57,13 +61,26 @@ public class TCustomServerSocket extends TServerTransport
      * @throws TTransportException
      */
     public TCustomServerSocket(InetSocketAddress bindAddr, boolean keepAlive, Integer sendBufferSize,
-            Integer recvBufferSize)
+            Integer recvBufferSize, SSLContext ctx, String[] suites)
             throws TTransportException
     {
         try
         {
-            // Make server socket
-            serverSocket = new ServerSocket();
+
+            if (ctx != null)
+            {           
+                // Make ssl server socket            
+                serverSocket = (SSLServerSocket)ctx.getServerSocketFactory().createServerSocket();
+                serverSocket.setReuseAddress(true);
+                String[] suits = SSLFactory.filterCipherSuites(((SSLServerSocket)serverSocket).getSupportedCipherSuites(), suites);
+                ((SSLServerSocket) serverSocket).setEnabledCipherSuites(suits);
+            }
+            else
+            {
+                // make server socket
+                serverSocket = new ServerSocket();
+            }
+
             // Prevent 2MSL delay problem on server restarts
             serverSocket.setReuseAddress(true);
             // Bind to listening port

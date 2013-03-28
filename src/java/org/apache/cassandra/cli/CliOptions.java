@@ -17,8 +17,12 @@
  */
 package org.apache.cassandra.cli;
 
+import org.apache.cassandra.thrift.TClientTransportFactory;
+import org.apache.cassandra.thrift.TFramedTransportFactory;
 import org.apache.commons.cli.*;
-import org.apache.thrift.transport.TTransportFactory;
+import org.apache.thrift.transport.TFramedTransport;
+
+import java.util.*;
 
 /**
  *
@@ -35,7 +39,6 @@ public class CliOptions
     // Command line options
     private static final String HOST_OPTION = "host";
     private static final String PORT_OPTION = "port";
-    private static final String TRANSPORT_FACTORY = "transport-factory";
     private static final String DEBUG_OPTION = "debug";
     private static final String USERNAME_OPTION = "username";
     private static final String PASSWORD_OPTION = "password";
@@ -76,15 +79,11 @@ public class CliOptions
         options.addOption(null, JMX_USERNAME_OPTION, "JMX-USERNAME", "JMX service username");
         options.addOption(null, JMX_PASSWORD_OPTION, "JMX-PASSWORD", "JMX service password");
         options.addOption(null, SCHEMA_MIGRATION_WAIT_TIME,  "TIME", "Schema migration wait time (secs.), default is 10 secs");
-        options.addOption("tf", TRANSPORT_FACTORY, "TRANSPORT-FACTORY", "Fully-qualified TTransportFactory class name for creating a connection to cassandra");
-
-        // ssl connection-related options
-        options.addOption("ts", SSL_TRUSTSTORE, "TRUSTSTORE", "SSL: full path to truststore");
-        options.addOption("tspw", SSL_TRUSTSTORE_PW, "TRUSTSTORE-PASSWORD", "SSL: full path to truststore");
-        options.addOption("prtcl", SSL_PROTOCOL, "PROTOCOL", "SSL: connections protocol to use (default: TLS)");
-        options.addOption("alg", SSL_ALGORITHM, "ALGORITHM", "SSL: algorithm (default: SunX509)");
-        options.addOption("st", SSL_STORE_TYPE, "STORE-TYPE", "SSL: type of store");
-        options.addOption("ciphers", SSL_CIPHER_SUITES, "CIPHER-SUITES", "SSL: comma-separated list of encryption suites to use");
+        options.addOption(
+                TClientTransportFactory.SHORT_OPTION,
+                TClientTransportFactory.LONG_OPTION,
+                "TRANSPORT-FACTORY",
+                "Fully-qualified TTransportFactory class name for creating a connection to cassandra");
 
         // options without argument
         options.addOption("B",  BATCH_OPTION,   "enabled batch mode (suppress output; errors are fatal)");
@@ -100,8 +99,9 @@ public class CliOptions
 
     public void processArgs(CliSessionState css, String[] args)
     {
-        CommandLineParser parser = new GnuParser();
+        args = setSystemProperties(args);
 
+        CommandLineParser parser = new GnuParser();
         try
         {
             CommandLine cmd = parser.parse(options, args, false);
@@ -115,10 +115,10 @@ public class CliOptions
                 css.hostName = DEFAULT_HOST;
             }
 
-            if (cmd.hasOption(TRANSPORT_FACTORY))
-            {
-                css.transportFactory = validateAndSetTransportFactory(cmd.getOptionValue(TRANSPORT_FACTORY));
-            }
+            String transportFactoryClassName = cmd.hasOption(TClientTransportFactory.LONG_OPTION)
+                    ? cmd.getOptionValue(TClientTransportFactory.LONG_OPTION)
+                    : System.getProperty(TClientTransportFactory.PROPERTY_KEY, TFramedTransportFactory.class.toString());
+            css.transportFactory = validateAndSetClientTransportFactory(transportFactoryClassName);
 
             if (cmd.hasOption(DEBUG_OPTION))
             {
@@ -144,6 +144,10 @@ public class CliOptions
             if (cmd.hasOption(PASSWORD_OPTION))
             {
                 css.password = cmd.getOptionValue(PASSWORD_OPTION);
+            }
+            else
+            {
+                css.password = "";
             }
 
             // Look for keyspace
@@ -193,36 +197,6 @@ public class CliOptions
                 css.schema_mwt = Integer.parseInt(cmd.getOptionValue(SCHEMA_MIGRATION_WAIT_TIME)) * 1000;
             }
 
-            if(cmd.hasOption(SSL_TRUSTSTORE))
-            {
-                css.encOptions.truststore = cmd.getOptionValue(SSL_TRUSTSTORE);
-            }
-
-            if(cmd.hasOption(SSL_TRUSTSTORE_PW))
-            {
-                css.encOptions.truststore_password = cmd.getOptionValue(SSL_TRUSTSTORE_PW);
-            }
-
-            if(cmd.hasOption(SSL_PROTOCOL))
-            {
-                css.encOptions.protocol = cmd.getOptionValue(SSL_PROTOCOL);
-            }
-
-            if(cmd.hasOption(SSL_ALGORITHM))
-            {
-                css.encOptions.algorithm = cmd.getOptionValue(SSL_ALGORITHM);
-            }
-
-            if(cmd.hasOption(SSL_STORE_TYPE))
-            {
-                css.encOptions.store_type = cmd.getOptionValue(SSL_STORE_TYPE);
-            }
-
-            if(cmd.hasOption(SSL_CIPHER_SUITES))
-            {
-                css.encOptions.cipher_suites = cmd.getOptionValue(SSL_CIPHER_SUITES).split(",");
-            }
-
             // Abort if there are any unrecognized arguments left
             if (cmd.getArgs().length > 0)
             {
@@ -239,6 +213,22 @@ public class CliOptions
             printUsage();
             System.exit(1);
         }
+    }
+
+    private static String[] setSystemProperties(String[] args)
+    {
+        List<String> unprocessedArgs = new ArrayList<String>();
+        for (String arg : args)
+        {
+            if (arg.matches("-D[\\w\\.]+=.*"))
+            {
+                String[] keyValue = arg.split("=");
+                System.setProperty(keyValue[0].substring(2), keyValue[1]);
+            }
+            else
+                unprocessedArgs.add(arg);
+        }
+        return unprocessedArgs.toArray(new String[unprocessedArgs.size()]);
     }
 
     private static class CLIOptions extends Options
@@ -272,21 +262,33 @@ public class CliOptions
         }
     }
 
-    private static TTransportFactory validateAndSetTransportFactory(String transportFactory)
+
+    private static TClientTransportFactory validateAndSetClientTransportFactory(String clientTransportFactory)
     {
         try
         {
-            Class factory = Class.forName(transportFactory);
+            Class factoryClass = Class.forName(clientTransportFactory);
 
-            if(!TTransportFactory.class.isAssignableFrom(factory))
+            if (!TClientTransportFactory.class.isAssignableFrom(factoryClass))
                 throw new IllegalArgumentException(String.format("transport factory '%s' " +
-                                                                 "not derived from TTransportFactory", transportFactory));
+                                                                 "not derived from TClientTransportFactory", clientTransportFactory));
 
-            return (TTransportFactory) factory.newInstance();
+            TClientTransportFactory factory = (TClientTransportFactory) factoryClass.newInstance();
+            configureTransportFactory(factory);
+            return factory;
         }
         catch (Exception e)
         {
-            throw new IllegalArgumentException(String.format("Cannot create a transport factory '%s'.", transportFactory), e);
+            throw new IllegalArgumentException(String.format("Cannot create a transport factory '%s'.", clientTransportFactory), e);
         }
+    }
+
+    private static void configureTransportFactory(TClientTransportFactory factory)
+    {
+        Map<String, String> options = new HashMap<String, String>();
+        for (String optionKey : factory.supportedOptions())
+            if (System.getProperty(optionKey) != null)
+                options.put(optionKey, System.getProperty(optionKey));
+        factory.setOptions(options);
     }
 }

@@ -23,11 +23,8 @@ import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import com.yammer.metrics.Metrics;
-import com.yammer.metrics.core.Histogram;
-import org.apache.cassandra.cli.transport.FramedTransportFactory;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ClientEncryptionOptions;
@@ -43,7 +40,6 @@ import org.apache.commons.lang.StringUtils;
 
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.thrift.protocol.TBinaryProtocol;
-import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportFactory;
 
@@ -61,7 +57,6 @@ public class Session implements Serializable
     public final AtomicInteger operations = new AtomicInteger();
     public final AtomicInteger keys = new AtomicInteger();
     public final com.yammer.metrics.core.Timer latency = Metrics.newTimer(Session.class, "latency");
-
     private static final String SSL_TRUSTSTORE = "truststore";
     private static final String SSL_TRUSTSTORE_PW = "truststore-password";
     private static final String SSL_PROTOCOL = "ssl-protocol";
@@ -115,7 +110,7 @@ public class Session implements Serializable
         availableOptions.addOption("st", SSL_STORE_TYPE,         true, "SSL: type of store");
         availableOptions.addOption("ciphers", SSL_CIPHER_SUITES, true, "SSL: comma-separated list of encryption suites to use");
     }
-
+    
     private int numKeys          = 1000 * 1000;
     private int numDifferentKeys = numKeys;
     private float skipKeys       = 0;
@@ -138,6 +133,8 @@ public class Session implements Serializable
     private boolean enable_cql    = false;
     private boolean use_prepared  = false;
     private boolean trace         = false;
+    
+    private String transportFactory = "org.apache.cassandra.thrift.TFramedTransportFactory";
 
     private final String outFileName;
 
@@ -164,11 +161,12 @@ public class Session implements Serializable
     public final boolean timeUUIDComparator;
     public double traceProbability = 0.0;
     public EncryptionOptions encOptions = new ClientEncryptionOptions();
-    public TTransportFactory transportFactory = new FramedTransportFactory();
 
     public Session(String[] arguments) throws IllegalArgumentException, SyntaxException
     {
         float STDev = 0.1f;
+
+        arguments = setSystemProperties(arguments);
         CommandLineParser parser = new PosixParser();
 
         try
@@ -405,27 +403,24 @@ public class Session implements Serializable
                 timeUUIDComparator = false;
             }
 
-            if(cmd.hasOption(SSL_TRUSTSTORE))
-                encOptions.truststore = cmd.getOptionValue(SSL_TRUSTSTORE);
 
-            if(cmd.hasOption(SSL_TRUSTSTORE_PW))
-                encOptions.truststore_password = cmd.getOptionValue(SSL_TRUSTSTORE_PW);
+            if (cmd.hasOption(TClientTransportFactory.SHORT_OPTION))
+            {
+                transportFactory = cmd.getOptionValue(TClientTransportFactory.SHORT_OPTION);
+                if (transportFactory == null)
+                {
+                    System.err.println("Option " + TClientTransportFactory.SHORT_OPTION + " needs argument.");
+                    System.exit(1);
+                }
+            }
+            else
+            {
+                transportFactory = System.getProperty(
+                        TClientTransportFactory.PROPERTY_KEY,
+                        TFramedTransportFactory.class.toString());
+            }
 
-            if(cmd.hasOption(SSL_PROTOCOL))
-                encOptions.protocol = cmd.getOptionValue(SSL_PROTOCOL);
-
-            if(cmd.hasOption(SSL_ALGORITHM))
-                encOptions.algorithm = cmd.getOptionValue(SSL_ALGORITHM);
-
-            if(cmd.hasOption(SSL_STORE_TYPE))
-                encOptions.store_type = cmd.getOptionValue(SSL_STORE_TYPE);
-
-            if(cmd.hasOption(SSL_CIPHER_SUITES))
-                encOptions.cipher_suites = cmd.getOptionValue(SSL_CIPHER_SUITES).split(",");
-
-            if (cmd.hasOption("tf"))
-                transportFactory = validateAndSetTransportFactory(cmd.getOptionValue("tf"));
-
+            validateTransportFactory();
         }
         catch (ParseException e)
         {
@@ -456,6 +451,40 @@ public class Session implements Serializable
         {
             throw new IllegalArgumentException(String.format("Cannot create a transport factory '%s'.", transportFactory), e);
         }
+    }
+
+    private void validateTransportFactory()
+    {
+        try
+        {
+            assert transportFactory != null : "Client transport factory must not be null";
+            if (!TClientTransportFactory.class.isAssignableFrom(Class.forName(transportFactory)))
+            {
+                System.err.println("Transport factory does not implement TClientTransportFactory: " + transportFactory);
+                System.exit(1);
+            }
+        }
+        catch (ClassNotFoundException ex)
+        {
+            System.err.println("Class not found: " + ex.getMessage());
+            System.exit(1);
+        }
+    }
+
+    private String[] setSystemProperties(String[] args)
+    {
+        List<String> unprocessedArgs = new ArrayList<String>();
+        for (String arg : args)
+        {
+            if (arg.matches("-D[\\w\\.]+=.*"))
+            {
+                String[] keyValue = arg.split("=");
+                System.setProperty(keyValue[0].substring(2), keyValue[1]);
+            }
+            else
+                unprocessedArgs.add(arg);
+        }
+        return unprocessedArgs.toArray(new String[unprocessedArgs.size()]);
     }
 
     public int getCardinality()
@@ -696,27 +725,26 @@ public class Session implements Serializable
      * @param setKeyspace - should we set keyspace for client or not
      * @return cassandra client connection
      */
-    public CassandraClient getClient(boolean setKeyspace)
+    public synchronized CassandraClient getClient(boolean setKeyspace)
     {
         // random node selection for fake load balancing
         String currentNode = nodes[Stress.randomizer.nextInt(nodes.length)];
 
-        TSocket socket = new TSocket(currentNode, port);
-        TTransport transport = transportFactory.getTransport(socket);
-        CassandraClient client = new CassandraClient(new TBinaryProtocol(transport));
-
         try
         {
-            if(!transport.isOpen())
-                transport.open();
+            TClientTransportFactory factory = (TClientTransportFactory) Class.forName(transportFactory).newInstance();
+            configureTransportFactory(factory);
+            TTransport transport = factory.openTransport(currentNode, port);
+            CassandraClient client = new CassandraClient(new TBinaryProtocol(transport));
 
-            if (enable_cql)
-                client.set_cql_version(cqlVersion);
 
             if (setKeyspace)
             {
                 client.set_keyspace("Keyspace1");
             }
+            
+            return client;
+
         }
         catch (InvalidRequestException e)
         {
@@ -726,8 +754,15 @@ public class Session implements Serializable
         {
             throw new RuntimeException(e.getMessage());
         }
+    }
 
-        return client;
+    private void configureTransportFactory(TClientTransportFactory factory)
+    {
+        Map<String, String> options = new HashMap<String, String>();
+        for (String optionKey : factory.supportedOptions())
+            if (System.getProperty(optionKey) != null)
+                options.put(optionKey, System.getProperty(optionKey));
+        factory.setOptions(options);
     }
 
     public static InetAddress getLocalAddress()
