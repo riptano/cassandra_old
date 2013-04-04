@@ -1,3 +1,7 @@
+DSE backports/cherry-picks
+ * Ensure that PerRowSecondaryIndex updates see the most recent values
+   (CASSANDRA-5397)
+
 1.2.2
  * fix potential for multiple concurrent compactions of the same sstables
    (CASSANDRA-5256)
