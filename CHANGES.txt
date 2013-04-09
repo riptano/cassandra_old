@@ -1,6 +1,11 @@
+
 DSE backports/cherry-picks
+ * remove the index entry on oldColumn when new column is a tombstone
+   (CASSANDRA-5395)
  * Ensure that PerRowSecondaryIndex updates see the most recent values
    (CASSANDRA-5397)
+ * Ensure that PerRowSecondaryIndex is notified of row-level deletes
+   (CASSANDRA-5445)
 
 1.2.2
  * fix potential for multiple concurrent compactions of the same sstables
