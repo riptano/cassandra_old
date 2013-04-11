@@ -171,7 +171,7 @@ public final class CFMetaData
                                                          + "rpc_address inet,"
                                                          + "data_center text,"
                                                          + "rack text,"
-                                                         + "work_load text" 
+                                                         + "workload text" 
                                                          + ") WITH COMMENT='known peers in the cluster'");
 
     public static final CFMetaData PeerEventsCf = compile(12, "CREATE TABLE " + SystemTable.PEER_EVENTS_CF + " ("
