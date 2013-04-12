@@ -33,6 +33,7 @@ import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.db.DefsTable;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.*;
+import org.apache.cassandra.utils.FBUtilities;
 
 public class Auth
 {
@@ -60,9 +61,10 @@ public class Auth
     public static boolean isExistingUser(String username)
     throws InvalidRequestException, UnavailableException, TimedOutException
     {
-        String query = String.format("SELECT * FROM %s.%s USING CONSISTENCY QUORUM WHERE name = '%s'",
+        String query = String.format("SELECT * FROM %s.%s USING CONSISTENCY %s WHERE name = '%s'",
                                      AUTH_KS,
                                      USERS_CF,
+                                     consistencyForUser(username),
                                      escape(username));
         return !QueryProcessor.processInternal(query).type.equals(CqlResultType.VOID);
     }
@@ -75,9 +77,10 @@ public class Auth
      */
     public static boolean isSuperuser(String username)
     {
-        String query = String.format("SELECT super FROM %s.%s USING CONSISTENCY QUORUM WHERE name = '%s'",
+        String query = String.format("SELECT super FROM %s.%s USING CONSISTENCY %s WHERE name = '%s'",
                                      AUTH_KS,
                                      USERS_CF,
+                                     consistencyForUser(username),
                                      escape(username));
         try
         {
@@ -100,11 +103,12 @@ public class Auth
     public static void insertUser(String username, boolean isSuper)
     throws InvalidRequestException, UnavailableException, TimedOutException
     {
-        QueryProcessor.processInternal(String.format("INSERT INTO %s.%s (name, super) VALUES ('%s', '%s') USING CONSISTENCY QUORUM",
+        QueryProcessor.processInternal(String.format("INSERT INTO %s.%s (name, super) VALUES ('%s', '%s') USING CONSISTENCY %s",
                                                      AUTH_KS,
                                                      USERS_CF,
                                                      escape(username),
-                                                     isSuper));
+                                                     isSuper,
+                                                     consistencyForUser(username)));
     }
 
     /**
@@ -115,9 +119,10 @@ public class Auth
     public static void deleteUser(String username)
     throws InvalidRequestException, UnavailableException, TimedOutException
     {
-        QueryProcessor.processInternal(String.format("DELETE FROM %s.%s USING CONSISTENCY QUORUM WHERE name = '%s'",
+        QueryProcessor.processInternal(String.format("DELETE FROM %s.%s USING CONSISTENCY %s WHERE name = '%s'",
                                                      AUTH_KS,
                                                      USERS_CF,
+                                                     consistencyForUser(username),
                                                      escape(username)));
     }
 
@@ -137,8 +142,17 @@ public class Auth
      */
     public static void setupDefaultUsers()
     {
-        setupDefaultSuperuser();
-        authenticator().setupDefaultUser();
+        if (DatabaseDescriptor.getSeeds().contains(FBUtilities.getBroadcastAddress()) || !DatabaseDescriptor.isAutoBootstrap())
+        {
+            setupDefaultSuperuser();
+            authenticator().setupDefaultUser();
+        }
+    }
+
+    // Only use QUORUM cl for the default superuser.
+    private static String consistencyForUser(String username)
+    {
+        return username.equals(DEFAULT_SUPERUSER_NAME) ? "QUORUM" : "ONE";
     }
 
     // Create auth keyspace unless it's already been loaded.
