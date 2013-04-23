@@ -66,31 +66,33 @@ public class Server implements CassandraDaemon.Server
 
     public final InetSocketAddress socket;
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
+    private final ChannelPipelineFactory pipelineFactory;
 
     private ChannelFactory factory;
     private ExecutionHandler executionHandler;
 
-    public Server(InetSocketAddress socket)
+    public Server(InetSocketAddress socket, ChannelPipelineFactory pipelineFactory)
     {
         this.socket = socket;
+        this.pipelineFactory = pipelineFactory;
         EventNotifier notifier = new EventNotifier(this);
         StorageService.instance.register(notifier);
         MigrationManager.instance.register(notifier);
     }
 
-    public Server(String hostname, int port)
+    public Server(String hostname, int port, ChannelPipelineFactory pipelineFactory)
     {
-        this(new InetSocketAddress(hostname, port));
+        this(new InetSocketAddress(hostname, port), pipelineFactory);
     }
 
-    public Server(InetAddress host, int port)
+    public Server(InetAddress host, int port, ChannelPipelineFactory pipelineFactory)
     {
-        this(new InetSocketAddress(host, port));
+        this(new InetSocketAddress(host, port), pipelineFactory);
     }
 
-    public Server(int port)
+    public Server(int port, ChannelPipelineFactory pipelineFactory)
     {
-        this(new InetSocketAddress(port));
+        this(new InetSocketAddress(port), pipelineFactory);
     }
 
     public void start()
@@ -118,19 +120,7 @@ public class Server implements CassandraDaemon.Server
         ServerBootstrap bootstrap = new ServerBootstrap(factory);
 
         bootstrap.setOption("child.tcpNoDelay", true);
-
-        // Set up the event pipeline factory.
-        final EncryptionOptions.ClientEncryptionOptions clientEnc = DatabaseDescriptor.getClientEncryptionOptions();
-        if (clientEnc.enabled)
-        {
-            logger.info("enabling encrypted CQL connections between client and server");
-            bootstrap.setPipelineFactory(new SecurePipelineFactory(this, clientEnc));
-        }
-        else
-        {
-            bootstrap.setPipelineFactory(new PipelineFactory(this));
-        }
-
+        bootstrap.setPipelineFactory(pipelineFactory);
         // Bind and start to accept incoming connections.
         logger.info("Starting listening for CQL clients on " + socket + "...");
         Channel channel = bootstrap.bind(socket);
@@ -185,54 +175,28 @@ public class Server implements CassandraDaemon.Server
         }
     }
 
-    private static class PipelineFactory implements ChannelPipelineFactory
+    public static class PipelineFactory extends AbstractPipelineFactory
     {
-        // Stateless handlers
-        private static final Message.ProtocolDecoder messageDecoder = new Message.ProtocolDecoder();
-        private static final Message.ProtocolEncoder messageEncoder = new Message.ProtocolEncoder();
-        private static final Frame.Decompressor frameDecompressor = new Frame.Decompressor();
-        private static final Frame.Compressor frameCompressor = new Frame.Compressor();
-        private static final Frame.Encoder frameEncoder = new Frame.Encoder();
-        private static final Message.Dispatcher dispatcher = new Message.Dispatcher();
 
-        private final Server server;
-
-        public PipelineFactory(Server server)
+        public PipelineFactory(ConnectionTracker connectionTracker)
         {
-            this.server = server;
+            super(connectionTracker);
         }
 
-        public ChannelPipeline getPipeline() throws Exception
+        public void updatePipeline(ChannelPipeline pipeline)
         {
-            ChannelPipeline pipeline = Channels.pipeline();
-
-            //pipeline.addLast("debug", new LoggingHandler());
-
-            pipeline.addLast("frameDecoder", new Frame.Decoder(server.connectionTracker, ServerConnection.FACTORY));
-            pipeline.addLast("frameEncoder", frameEncoder);
-
-            pipeline.addLast("frameDecompressor", frameDecompressor);
-            pipeline.addLast("frameCompressor", frameCompressor);
-
-            pipeline.addLast("messageDecoder", messageDecoder);
-            pipeline.addLast("messageEncoder", messageEncoder);
-
-            pipeline.addLast("executor", server.executionHandler);
-
-            pipeline.addLast("dispatcher", dispatcher);
-
-            return pipeline;
-      }
+            // no-op
+        }
     }
 
-    private static class SecurePipelineFactory extends PipelineFactory
+    public static class SecurePipelineFactory extends AbstractPipelineFactory
     {
         private final SSLContext sslContext;
         private final EncryptionOptions encryptionOptions;
 
-        public SecurePipelineFactory(Server server, EncryptionOptions encryptionOptions)
+        public SecurePipelineFactory(ConnectionTracker connectionTracker, EncryptionOptions encryptionOptions)
         {
-            super(server);
+            super(connectionTracker);
             this.encryptionOptions = encryptionOptions;
             try
             {
@@ -244,7 +208,7 @@ public class Server implements CassandraDaemon.Server
             }
         }
 
-        public ChannelPipeline getPipeline() throws Exception
+        public void updatePipeline(ChannelPipeline pipeline) throws Exception
         {
             SSLEngine sslEngine = sslContext.createSSLEngine();
             sslEngine.setUseClientMode(false);
@@ -253,9 +217,7 @@ public class Server implements CassandraDaemon.Server
             
             SslHandler sslHandler = new SslHandler(sslEngine);
             sslHandler.setIssueHandshake(true);
-            ChannelPipeline pipeline = super.getPipeline();
             pipeline.addFirst("ssl", sslHandler);
-            return pipeline;
         }
     }
 

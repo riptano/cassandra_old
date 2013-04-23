@@ -27,7 +27,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.collect.Iterables;
+import org.apache.cassandra.config.EncryptionOptions;
+import org.apache.cassandra.transport.Server;
+import org.apache.cassandra.transport.Server.ConnectionTracker;
+import org.apache.cassandra.transport.Server.PipelineFactory;
+import org.apache.cassandra.transport.Server.SecurePipelineFactory;
 import org.apache.log4j.PropertyConfigurator;
+import org.jboss.netty.channel.ChannelPipelineFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -294,7 +300,19 @@ public class CassandraDaemon
         // Native transport
         InetAddress nativeAddr = DatabaseDescriptor.getNativeTransportAddress();
         int nativePort = DatabaseDescriptor.getNativeTransportPort();
-        nativeServer = new org.apache.cassandra.transport.Server(nativeAddr, nativePort);
+        // Set up the event pipeline factory.
+        ChannelPipelineFactory pipelineFactory;
+        final EncryptionOptions.ClientEncryptionOptions clientEnc = DatabaseDescriptor.getClientEncryptionOptions();
+        if (clientEnc.enabled)
+        {
+            logger.info("enabling encrypted CQL connections between client and server");
+            pipelineFactory = new SecurePipelineFactory(new ConnectionTracker(), clientEnc);
+        }
+        else
+        {
+            pipelineFactory = new PipelineFactory(new ConnectionTracker());
+        }
+        nativeServer = new org.apache.cassandra.transport.Server(nativeAddr, nativePort, pipelineFactory);
     }
 
     /**
