@@ -36,26 +36,41 @@ import org.apache.cassandra.utils.*;
  */
 public class IndexHelper
 {
+    public static void skipSSTableBloomFilter(DataInput in, Descriptor.Version version) throws IOException
+    {
+        if (version.hasBloomFilterSizeInHeader)
+        {
+            int size = in.readInt();
+            FileUtils.skipBytesFully(in, size);
+        }
+        else
+        {
+            skipBloomFilter(in, version.filterType);
+        }
+    }
 
     /**
      * Skip the bloom filter
      * @param in the data input from which the bloom filter should be skipped
      * @throws IOException
      */
-    public static void skipBloomFilter(DataInput in) throws IOException
+    public static void skipBloomFilter(DataInput in, FilterFactory.Type type) throws IOException
     {
         /* size of the bloom filter */
         int size = in.readInt();
-        /* skip the serialized bloom filter */
-        if (in instanceof FileDataInput)
+        switch (type)
         {
-            FileUtils.skipBytesFully(in, size);
-        }
-        else
-        {
-            // skip bytes
-            byte[] skip = new byte[size];
-            in.readFully(skip);
+            case SHA:
+                // can skip since bitset = 1 byte
+                FileUtils.skipBytesFully(in, size);
+                break;
+            case MURMUR2:
+            case MURMUR3:
+                long bitLength = in.readInt() * 8;
+                FileUtils.skipBytesFully(in, bitLength);
+                break;
+            default:
+                throw new IllegalStateException("Unknown filterfactory type " + type.toString());
         }
     }
 
@@ -230,6 +245,12 @@ public class IndexHelper
         public static IndexInfo deserialize(DataInput dis) throws IOException
         {
             return new IndexInfo(ByteBufferUtil.readWithShortLength(dis), ByteBufferUtil.readWithShortLength(dis), dis.readLong(), dis.readLong());
+        }
+
+        public long memorySize()
+        {
+            long fields = ObjectSizes.getSize(firstName) + ObjectSizes.getSize(lastName) + 8 + 8; 
+            return ObjectSizes.getFieldSize(fields);
         }
     }
 }
