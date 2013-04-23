@@ -47,7 +47,7 @@ public class Descriptor
     public static class Version
     {
         // This needs to be at the begining for initialization sake
-        private static final String current_version = "ib";
+        public static final String current_version = "ib";
 
         public static final Version LEGACY = new Version("a"); // "pre-history"
         // b (0.7.0): added version to sstable filenames
@@ -85,6 +85,7 @@ public class Descriptor
         public final boolean hasPromotedIndexes;
         public final FilterFactory.Type filterType;
         public final boolean hasAncestors;
+        public final boolean hasBloomFilterSizeInHeader;
 
         public Version(String version)
         {
@@ -108,6 +109,7 @@ public class Descriptor
                 filterType = FilterFactory.Type.MURMUR2;
             else
                 filterType = FilterFactory.Type.MURMUR3;
+            hasBloomFilterSizeInHeader = version.compareTo("ia") < 0;
         }
 
         /**
@@ -197,7 +199,7 @@ public class Descriptor
         this.cfname = cfname;
         this.generation = generation;
         temporary = temp;
-        hashCode = Objects.hashCode(directory, generation, ksname, cfname);
+        hashCode = Objects.hashCode(directory, generation, ksname, cfname, temp);
     }
 
     public Descriptor withGeneration(int newGeneration)
@@ -328,7 +330,7 @@ public class Descriptor
         if (!(o instanceof Descriptor))
             return false;
         Descriptor that = (Descriptor)o;
-        return that.directory.equals(this.directory) && that.generation == this.generation && that.ksname.equals(this.ksname) && that.cfname.equals(this.cfname);
+        return that.directory.equals(this.directory) && that.generation == this.generation && that.ksname.equals(this.ksname) && that.cfname.equals(this.cfname) && that.temporary == this.temporary;
     }
 
     @Override
