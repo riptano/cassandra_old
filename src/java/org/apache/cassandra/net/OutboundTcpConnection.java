@@ -73,7 +73,7 @@ public class OutboundTcpConnection extends Thread
     private static boolean isLocalDC(InetAddress targetHost)
     {
         String remoteDC = DatabaseDescriptor.getEndpointSnitch().getDatacenter(targetHost);
-        String localDC = DatabaseDescriptor.getEndpointSnitch().getDatacenter(FBUtilities.getBroadcastAddress());
+        String localDC = DatabaseDescriptor.getEndpointSnitch().getDatacenter(DatabaseDescriptor.getRpcAddress());
         return remoteDC.equals(localDC);
     }
 
@@ -82,7 +82,7 @@ public class OutboundTcpConnection extends Thread
         expireMessages();
         try
         {
-            backlog.put(new QueuedMessage(message, id));
+            backlog.put(new QueuedMessage(message, id, System.currentTimeMillis()));
         }
         catch (InterruptedException e)
         {
@@ -192,31 +192,12 @@ public class OutboundTcpConnection extends Thread
         }
         catch (Exception e)
         {
-            disconnect();
-            if (e instanceof IOException)
-            {
-                if (logger.isDebugEnabled())
-                    logger.debug("error writing to " + poolReference.endPoint(), e);
-
-                // if the message was important, such as a repair acknowledgement, put it back on the queue
-                // to retry after re-connecting.  See CASSANDRA-5393
-                if (e instanceof SocketException && qm.shouldRetry())
-                {
-                    try
-                    {
-                        backlog.put(new RetriedQueuedMessage(qm));
-                    }
-                    catch (InterruptedException e1)
-                    {
-                        throw new AssertionError(e1);
-                    }
-                }
-            }
-            else
-            {
-                // Non IO exceptions are likely a programming error so let's not silence them
+            // Non IO exceptions is likely a programming error so let's not silence it
+            if (!(e instanceof IOException))
                 logger.error("error writing to " + poolReference.endPoint(), e);
-            }
+            else if (logger.isDebugEnabled())
+                logger.debug("error writing to " + poolReference.endPoint(), e);
+            disconnect();
         }
     }
 
@@ -385,36 +366,17 @@ public class OutboundTcpConnection extends Thread
         }
     }
 
-    /** messages that have not been retried yet */
     private static class QueuedMessage
     {
         final MessageOut<?> message;
         final String id;
         final long timestamp;
 
-        QueuedMessage(MessageOut<?> message, String id)
+        QueuedMessage(MessageOut<?> message, String id, long timestamp)
         {
             this.message = message;
             this.id = id;
-            this.timestamp = System.currentTimeMillis();
-        }
-
-        boolean shouldRetry()
-        {
-            return !MessagingService.DROPPABLE_VERBS.contains(message.verb);
-        }
-    }
-
-    private static class RetriedQueuedMessage extends QueuedMessage
-    {
-        RetriedQueuedMessage(QueuedMessage msg)
-        {
-            super(msg.message, msg.id);
-        }
-
-        boolean shouldRetry()
-        {
-            return false;
+            this.timestamp = timestamp;
         }
     }
 }

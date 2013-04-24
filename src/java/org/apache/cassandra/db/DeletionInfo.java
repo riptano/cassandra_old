@@ -35,7 +35,6 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.IntervalTree;
-import org.apache.cassandra.utils.ObjectSizes;
 
 public class DeletionInfo
 {
@@ -65,11 +64,6 @@ public class DeletionInfo
     {
         this(DeletionTime.LIVE, IntervalTree.build(Collections.<RangeTombstone>singletonList(rangeTombstone), comparator));
         assert comparator != null;
-    }
-
-    public DeletionInfo(DeletionTime topLevel)
-    {
-        this(topLevel, IntervalTree.<ByteBuffer, DeletionTime, RangeTombstone>emptyTree());
     }
 
     private DeletionInfo(DeletionTime topLevel, IntervalTree<ByteBuffer, DeletionTime, RangeTombstone> ranges)

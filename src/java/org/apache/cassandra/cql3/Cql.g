@@ -704,7 +704,6 @@ collection_literal returns [Term.Raw value]
 value returns [Term.Raw value]
     : c=constant           { $value = c; }
     | l=collection_literal { $value = l; }
-    | K_NULL               { $value = Constants.NULL_LITERAL; }
     | QMARK                { $value = new AbstractMarker.Raw(++currentBindMarkerIdx); }
     ;
 
@@ -962,8 +961,6 @@ K_TIMEUUID:    T I M E U U I D;
 K_TOKEN:       T O K E N;
 K_WRITETIME:   W R I T E T I M E;
 
-K_NULL:        N U L L;
-
 K_MAP:         M A P;
 K_LIST:        L I S T;
 
@@ -1052,7 +1049,7 @@ IDENT
     ;
 
 HEXNUMBER
-    : '0' X HEX*
+    : '0' X HEX+
     ;
 
 UUID

@@ -38,6 +38,7 @@ import org.apache.cassandra.db.filter.ColumnSlice;
 import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.service.StorageService;
@@ -260,7 +261,14 @@ public class Table
         name = table;
         KSMetaData ksm = Schema.instance.getKSMetaData(table);
         assert ksm != null : "Unknown keyspace " + table;
-        createReplicationStrategy(ksm);
+        try
+        {
+            createReplicationStrategy(ksm);
+        }
+        catch (ConfigurationException e)
+        {
+            throw new RuntimeException(e);
+        }
 
         indexLocks = new Object[DatabaseDescriptor.getConcurrentWriters() * 128];
         for (int i = 0; i < indexLocks.length; i++)
@@ -273,7 +281,7 @@ public class Table
         }
     }
 
-    public void createReplicationStrategy(KSMetaData ksm)
+    public void createReplicationStrategy(KSMetaData ksm) throws ConfigurationException
     {
         if (replicationStrategy != null)
             StorageService.instance.getTokenMetadata().unregister(replicationStrategy);

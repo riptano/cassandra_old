@@ -18,8 +18,11 @@
 package org.apache.cassandra.cql3;
 
 import java.nio.ByteBuffer;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 
+import com.google.common.base.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,38 +48,6 @@ public abstract class Constants
     {
         STRING, INTEGER, UUID, FLOAT, BOOLEAN, HEX;
     }
-
-    public static final Term.Raw NULL_LITERAL = new Term.Raw()
-    {
-        private final Term.Terminal NULL_VALUE = new Value(null)
-        {
-            @Override
-            public Terminal bind(List<ByteBuffer> values)
-            {
-                // We return null because that makes life easier for collections
-                return null;
-            }
-        };
-
-        public Term prepare(ColumnSpecification receiver) throws InvalidRequestException
-        {
-            if (!isAssignableTo(receiver))
-                throw new InvalidRequestException("Invalid null value for counter increment/decrement");
-
-            return NULL_VALUE;
-        }
-
-        public boolean isAssignableTo(ColumnSpecification receiver)
-        {
-            return !(receiver.type instanceof CounterColumnType);
-        }
-
-        @Override
-        public String toString()
-        {
-            return null;
-        }
-    };
 
     public static class Literal implements Term.Raw
     {
@@ -283,8 +254,7 @@ public abstract class Constants
             try
             {
                 ByteBuffer value = values.get(bindIndex);
-                if (value != null)
-                    receiver.type.validate(value);
+                receiver.type.validate(value);
                 return value;
             }
             catch (MarshalException e)
@@ -295,8 +265,7 @@ public abstract class Constants
 
         public Value bind(List<ByteBuffer> values) throws InvalidRequestException
         {
-            ByteBuffer bytes = bindAndGet(values);
-            return bytes == null ? null : new Constants.Value(bytes);
+            return new Constants.Value(bindAndGet(values));
         }
     }
 
@@ -310,8 +279,7 @@ public abstract class Constants
         public void execute(ByteBuffer rowKey, ColumnFamily cf, ColumnNameBuilder prefix, UpdateParameters params) throws InvalidRequestException
         {
             ByteBuffer cname = columnName == null ? prefix.build() : prefix.add(columnName.key).build();
-            ByteBuffer value = t.bindAndGet(params.variables);
-            cf.addColumn(value == null ? params.makeTombstone(cname) : params.makeColumn(cname, value));
+            cf.addColumn(params.makeColumn(cname, t.bindAndGet(params.variables)));
         }
     }
 
@@ -324,10 +292,7 @@ public abstract class Constants
 
         public void execute(ByteBuffer rowKey, ColumnFamily cf, ColumnNameBuilder prefix, UpdateParameters params) throws InvalidRequestException
         {
-            ByteBuffer bytes = t.bindAndGet(params.variables);
-            if (bytes == null)
-                throw new InvalidRequestException("Invalid null value for counter increment");
-            long increment = ByteBufferUtil.toLong(bytes);
+            long increment = ByteBufferUtil.toLong(t.bindAndGet(params.variables));
             ByteBuffer cname = columnName == null ? prefix.build() : prefix.add(columnName.key).build();
             cf.addCounter(new QueryPath(cf.metadata().cfName, null, cname), increment);
         }
@@ -342,11 +307,7 @@ public abstract class Constants
 
         public void execute(ByteBuffer rowKey, ColumnFamily cf, ColumnNameBuilder prefix, UpdateParameters params) throws InvalidRequestException
         {
-            ByteBuffer bytes = t.bindAndGet(params.variables);
-            if (bytes == null)
-                throw new InvalidRequestException("Invalid null value for counter increment");
-
-            long increment = ByteBufferUtil.toLong(bytes);
+            long increment = ByteBufferUtil.toLong(t.bindAndGet(params.variables));
             if (increment == Long.MIN_VALUE)
                 throw new InvalidRequestException("The negation of " + increment + " overflows supported counter precision (signed 8 bytes integer)");
 

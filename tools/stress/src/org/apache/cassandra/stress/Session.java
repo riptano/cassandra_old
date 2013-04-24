@@ -35,7 +35,6 @@ import org.apache.commons.cli.*;
 
 import org.apache.cassandra.db.ColumnFamilyType;
 import org.apache.cassandra.stress.util.CassandraClient;
-import org.apache.cassandra.transport.SimpleClient;
 import org.apache.cassandra.thrift.*;
 import org.apache.commons.lang.StringUtils;
 
@@ -91,7 +90,6 @@ public class Session implements Serializable
         availableOptions.addOption("l",  "replication-factor",   true,   "Replication Factor to use when creating needed column families, default:1");
         availableOptions.addOption("L",  "enable-cql",           false,  "Perform queries using CQL2 (Cassandra Query Language v 2.0.0)");
         availableOptions.addOption("L3", "enable-cql3",          false,  "Perform queries using CQL3 (Cassandra Query Language v 3.0.0)");
-        availableOptions.addOption("b",  "enable-native-protocol",  false,  "Use the binary native protocol (only work along with -L3)");
         availableOptions.addOption("P",  "use-prepared-statements", false, "Perform queries using prepared statements (only applicable to CQL).");
         availableOptions.addOption("e",  "consistency-level",    true,   "Consistency Level to use (ONE, QUORUM, LOCAL_QUORUM, EACH_QUORUM, ALL, ANY), default:ONE");
         availableOptions.addOption("x",  "create-index",         true,   "Type of index to create on needed column families (KEYS)");
@@ -135,10 +133,8 @@ public class Session implements Serializable
     private boolean enable_cql    = false;
     private boolean use_prepared  = false;
     private boolean trace         = false;
-
+    
     private String transportFactory = "org.apache.cassandra.thrift.TFramedTransportFactory";
-
-    public boolean use_native_protocol = false;
 
     private final String outFileName;
 
@@ -302,12 +298,6 @@ public class Session implements Serializable
                 cqlVersion = "3.0.0";
             }
 
-            if (cmd.hasOption("b"))
-            {
-                if (!(enable_cql && cqlVersion.startsWith("3")))
-                    throw new IllegalArgumentException("Cannot use binary protocol without -L3");
-                use_native_protocol = true;
-            }
 
             if (cmd.hasOption("P"))
             {
@@ -730,7 +720,6 @@ public class Session implements Serializable
     {
         return getClient(true);
     }
-
     /**
      * Thrift client connection
      * @param setKeyspace - should we set keyspace for client or not
@@ -774,22 +763,6 @@ public class Session implements Serializable
             if (System.getProperty(optionKey) != null)
                 options.put(optionKey, System.getProperty(optionKey));
         factory.setOptions(options);
-    }
-
-    public SimpleClient getNativeClient()
-    {
-        try
-        {
-            String currentNode = nodes[Stress.randomizer.nextInt(nodes.length)];
-            SimpleClient client = new SimpleClient(currentNode, 9042);
-            client.connect(false);
-            client.execute("USE \"Keyspace1\";", org.apache.cassandra.db.ConsistencyLevel.ONE);
-            return client;
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException(e.getMessage());
-        }
     }
 
     public static InetAddress getLocalAddress()

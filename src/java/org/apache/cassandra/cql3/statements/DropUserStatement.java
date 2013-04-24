@@ -42,7 +42,7 @@ public class DropUserStatement extends AuthenticationStatement
         state.ensureNotAnonymous();
 
         if (!Auth.isExistingUser(username))
-            throw new InvalidRequestException(String.format("User %s doesn't exist", username));
+            throw new InvalidRequestException(String.format("User %s doesn't exists", username));
 
         AuthenticatedUser user = state.getUser();
         if (user != null && user.getName().equals(username))

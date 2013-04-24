@@ -253,14 +253,7 @@ public class CliTest extends SchemaLoader
             CliMain.processStatement(statement);
             String result = outStream.toString();
             // System.out.println("Result:\n" + result);
-            if (statement.startsWith("show schema"))
-                assertEquals(errStream.toString() + "processing" + statement,
-                             "\nWARNING: CQL3 tables are intentionally omitted from 'show schema' output.\n"
-                             + "See https://issues.apache.org/jira/browse/CASSANDRA-4377 for details.\n\n",
-                             errStream.toString());
-            else
-                assertEquals(errStream.toString() + " processing " + statement, "", errStream.toString());
-
+            assertEquals(errStream.toString() + " processing " + statement, "", errStream.toString());
             if (statement.startsWith("drop ") || statement.startsWith("create ") || statement.startsWith("update "))
             {
                 assert Pattern.compile("(.{8})-(.{4})-(.{4})-(.{4})-(.{12}).*", Pattern.DOTALL).matcher(result).matches()

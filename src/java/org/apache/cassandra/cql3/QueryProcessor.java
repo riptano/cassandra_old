@@ -205,20 +205,17 @@ public class QueryProcessor
         logger.trace("CQL QUERY: {}", queryString);
 
         ParsedStatement.Prepared prepared = getStatement(queryString, clientState);
-        ResultMessage.Prepared msg = storePreparedStatement(queryString, clientState.getRawKeyspace(), prepared, forThrift);
+        ResultMessage.Prepared msg = storePreparedStatement(queryString, prepared, forThrift);
 
         assert prepared.statement.getBoundsTerms() == prepared.boundNames.size();
         return msg;
     }
 
-    private static ResultMessage.Prepared storePreparedStatement(String queryString, String keyspace, ParsedStatement.Prepared prepared, boolean forThrift)
+    private static ResultMessage.Prepared storePreparedStatement(String queryString, ParsedStatement.Prepared prepared, boolean forThrift)
     {
-        // Concatenate the current keyspace so we don't mix prepared statements between keyspace (#5352).
-        // (if the keyspace is null, queryString has to have a fully-qualified keyspace so it's fine.
-        String toHash = keyspace == null ? queryString : keyspace + queryString;
         if (forThrift)
         {
-            int statementId = toHash.hashCode();
+            int statementId = queryString.hashCode();
             thriftPreparedStatements.put(statementId, prepared.statement);
             logger.trace(String.format("Stored prepared statement #%d with %d bind markers",
                                        statementId,
@@ -227,7 +224,7 @@ public class QueryProcessor
         }
         else
         {
-            MD5Digest statementId = MD5Digest.compute(toHash);
+            MD5Digest statementId = MD5Digest.compute(queryString);
             logger.trace(String.format("Stored prepared statement %s with %d bind markers",
                                        statementId,
                                        prepared.statement.getBoundsTerms()));

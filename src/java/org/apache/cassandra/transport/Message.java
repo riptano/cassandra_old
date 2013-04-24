@@ -205,33 +205,25 @@ public abstract class Message
 
             UUID tracingId = isRequest || !isTracing ? null : CBUtil.readUuid(frame.body);
 
-            try
-            {
-                Message message = frame.header.type.codec.decode(frame.body);
-                message.setStreamId(frame.header.streamId);
+            Message message = frame.header.type.codec.decode(frame.body);
+            message.setStreamId(frame.header.streamId);
 
-                if (isRequest)
-                {
-                    assert message instanceof Request;
-                    Request req = (Request)message;
-                    req.attach(frame.connection);
-                    if (isTracing)
-                        req.setTracingRequested();
-                }
-                else
-                {
-                    assert message instanceof Response;
-                    if (isTracing)
-                        ((Response)message).setTracingId(tracingId);
-                }
-
-                return message;
-            }
-            catch (Exception ex)
+            if (isRequest)
             {
-                // Remember the streamId
-                throw ErrorMessage.wrap(ex, frame.header.streamId);
+                assert message instanceof Request;
+                Request req = (Request)message;
+                req.attach(frame.connection);
+                if (isTracing)
+                    req.setTracingRequested();
             }
+            else
+            {
+                assert message instanceof Response;
+                if (isTracing)
+                    ((Response)message).setTracingId(tracingId);
+            }
+
+            return message;
         }
     }
 
@@ -282,14 +274,14 @@ public abstract class Message
                 ServerConnection connection = (ServerConnection)request.connection();
                 connection.validateNewMessage(request.type);
 
-                logger.debug("Received: {}", request);
+                logger.debug("Received: " + request);
 
                 Response response = request.execute(connection.getQueryState(request.getStreamId()));
                 response.setStreamId(request.getStreamId());
                 response.attach(connection);
                 connection.applyStateTransition(request.type, response.type);
 
-                logger.debug("Responding: {}", response);
+                logger.debug("Responding: " + response);
 
                 ctx.getChannel().write(response);
             }

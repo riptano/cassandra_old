@@ -24,19 +24,16 @@ package org.apache.cassandra.stress.operations;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Collections;
-import java.util.List;
 
 import com.yammer.metrics.core.TimerContext;
 import org.apache.cassandra.db.ColumnFamilyType;
 import org.apache.cassandra.stress.Session;
 import org.apache.cassandra.stress.util.CassandraClient;
 import org.apache.cassandra.stress.util.Operation;
-import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.thrift.Compression;
-import org.apache.cassandra.thrift.CqlResult;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
-public class CqlCounterAdder extends CQLOperation
+public class CqlCounterAdder extends Operation
 {
     private static String cqlQuery = null;
 
@@ -45,7 +42,7 @@ public class CqlCounterAdder extends CQLOperation
         super(client, idx);
     }
 
-    protected void run(CQLQueryExecutor executor) throws IOException
+    public void run(CassandraClient client) throws IOException
     {
         if (session.getColumnFamilyType() == ColumnFamilyType.Super)
             throw new RuntimeException("Super columns are not implemented for CQL");
@@ -73,7 +70,7 @@ public class CqlCounterAdder extends CQLOperation
         }
 
         String key = String.format("%0" + session.getTotalKeysLength() + "d", index);
-        List<String> queryParams = Collections.singletonList(getUnQuotedCqlBlob(key, session.cqlVersion.startsWith("3")));
+        String formattedQuery = null;
 
         TimerContext context = session.latency.time();
 
@@ -87,7 +84,25 @@ public class CqlCounterAdder extends CQLOperation
 
             try
             {
-                success = executor.execute(cqlQuery, queryParams);
+                if (session.usePreparedStatements())
+                {
+                    Integer stmntId = getPreparedStatement(client, cqlQuery);
+                    if (session.cqlVersion.startsWith("3"))
+                        client.execute_prepared_cql3_query(stmntId, Collections.singletonList(ByteBuffer.wrap(key.getBytes())), session.getConsistencyLevel());
+                    else
+                        client.execute_prepared_cql_query(stmntId, Collections.singletonList(ByteBuffer.wrap(key.getBytes())));
+                }
+                else
+                {
+                    if (formattedQuery == null)
+                        formattedQuery = formatCqlQuery(cqlQuery, Collections.singletonList(getUnQuotedCqlBlob(key, session.cqlVersion.startsWith("3"))));
+                    if (session.cqlVersion.startsWith("3"))
+                        client.execute_cql3_query(ByteBuffer.wrap(formattedQuery.getBytes()), Compression.NONE, session.getConsistencyLevel());
+                    else
+                        client.execute_cql_query(ByteBuffer.wrap(formattedQuery.getBytes()), Compression.NONE);
+                }
+
+                success = true;
             }
             catch (Exception e)
             {
@@ -108,15 +123,5 @@ public class CqlCounterAdder extends CQLOperation
         session.operations.getAndIncrement();
         session.keys.getAndIncrement();
         context.stop();
-    }
-
-    protected boolean validateThriftResult(CqlResult result)
-    {
-        return true;
-    }
-
-    protected boolean validateNativeResult(ResultMessage result)
-    {
-        return true;
     }
 }

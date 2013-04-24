@@ -18,7 +18,6 @@
 package org.apache.cassandra.db;
 
 import java.util.Collection;
-import java.util.Collections;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,16 +39,8 @@ public class MigrationRequestVerbHandler implements IVerbHandler
     public void doVerb(MessageIn message, String id)
     {
         logger.debug("Received migration request from {}.", message.from);
-
-        if (message.version < MessagingService.VERSION_12)
-            logger.debug("Returning empty response to the migration request from {} (version < 1.2).", message.from);
-
-        Collection<RowMutation> schema = message.version < MessagingService.VERSION_12
-                                         ? Collections.EMPTY_SET
-                                         : SystemTable.serializeSchema();
-
         MessageOut<Collection<RowMutation>> response = new MessageOut<Collection<RowMutation>>(MessagingService.Verb.INTERNAL_RESPONSE,
-                                                                                               schema,
+                                                                                               SystemTable.serializeSchema(),
                                                                                                MigrationManager.MigrationsSerializer.instance);
         MessagingService.instance().sendReply(response, id, message.from);
     }

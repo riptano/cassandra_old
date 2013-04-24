@@ -188,27 +188,14 @@ public class ErrorMessage extends Message.Response
         this.error = error;
     }
 
-    private ErrorMessage(TransportException error, int streamId)
-    {
-        this(error);
-        setStreamId(streamId);
-    }
-
     public static ErrorMessage fromException(Throwable e)
     {
-        int streamId = 0;
-        if (e instanceof WrappedException)
-        {
-            streamId = ((WrappedException)e).streamId;
-            e = e.getCause();
-        }
-
         if (e instanceof TransportException)
-            return new ErrorMessage((TransportException)e, streamId);
+            return new ErrorMessage((TransportException)e);
 
         // Unexpected exception
         logger.error("Unexpected exception during request", e);
-        return new ErrorMessage(new ServerError(e), streamId);
+        return new ErrorMessage(new ServerError(e));
     }
 
     public ChannelBuffer encode()
@@ -221,21 +208,4 @@ public class ErrorMessage extends Message.Response
     {
         return "ERROR " + error.code() + ": " + error.getMessage();
     }
-
-    public static RuntimeException wrap(Throwable t, int streamId)
-    {
-        return new WrappedException(t, streamId);
-    }
-
-    private static class WrappedException extends RuntimeException
-    {
-        private final int streamId;
-
-        public WrappedException(Throwable cause, int streamId)
-        {
-            super(cause);
-            this.streamId = streamId;
-        }
-    }
-
 }

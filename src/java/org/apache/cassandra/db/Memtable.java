@@ -150,15 +150,7 @@ public class Memtable
 
     public long getLiveSize()
     {
-        long estimatedSize = (long) (currentSize.get() * cfs.liveRatio);
-
-        // cap the estimate at both ends by what the allocator can tell us
-        if (estimatedSize < allocator.getMinimumSize())
-            return allocator.getMinimumSize();
-        if (estimatedSize > allocator.getMaximumSize())
-            return allocator.getMaximumSize();
-
-        return estimatedSize;
+        return (long) (currentSize.get() * cfs.liveRatio);
     }
 
     public long getSerializedSize()
@@ -236,7 +228,7 @@ public class Memtable
                         cfs.liveRatio = (cfs.liveRatio + newRatio) / 2.0;
 
                     logger.info("{} liveRatio is {} (just-counted was {}).  calculation took {}ms for {} columns",
-                                cfs, cfs.liveRatio, newRatio, System.currentTimeMillis() - start, objects);
+                                new Object[]{ cfs, cfs.liveRatio, newRatio, System.currentTimeMillis() - start, objects });
                     activelyMeasuring = null;
                 }
                 finally

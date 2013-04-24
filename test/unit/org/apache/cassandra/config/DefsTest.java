@@ -24,7 +24,6 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 
-import org.apache.cassandra.OrderedJUnit4ClassRunner;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.db.*;
@@ -44,9 +43,7 @@ import org.apache.cassandra.thrift.IndexType;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import org.junit.Test;
-import org.junit.runner.RunWith;
 
-@RunWith(OrderedJUnit4ClassRunner.class)
 public class DefsTest extends SchemaLoader
 {
 

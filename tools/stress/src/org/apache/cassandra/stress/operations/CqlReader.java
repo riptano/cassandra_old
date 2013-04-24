@@ -31,13 +31,10 @@ import org.apache.cassandra.db.ColumnFamilyType;
 import org.apache.cassandra.stress.Session;
 import org.apache.cassandra.stress.util.CassandraClient;
 import org.apache.cassandra.stress.util.Operation;
-import org.apache.cassandra.transport.SimpleClient;
-import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.thrift.Compression;
 import org.apache.cassandra.thrift.CqlResult;
-import org.apache.cassandra.thrift.ThriftConversion;
 
-public class CqlReader extends CQLOperation
+public class CqlReader extends Operation
 {
     private static String cqlQuery = null;
 
@@ -46,7 +43,7 @@ public class CqlReader extends CQLOperation
         super(client, idx);
     }
 
-    protected void run(CQLQueryExecutor executor) throws IOException
+    public void run(CassandraClient client) throws IOException
     {
         if (session.getColumnFamilyType() == ColumnFamilyType.Super)
             throw new RuntimeException("Super columns are not implemented for CQL");
@@ -88,6 +85,8 @@ public class CqlReader extends CQLOperation
         byte[] key = generateKey();
         queryParams.add(getUnQuotedCqlBlob(key, session.cqlVersion.startsWith("3")));
 
+        String formattedQuery = null;
+
         TimerContext context = session.latency.time();
 
         boolean success = false;
@@ -100,10 +99,31 @@ public class CqlReader extends CQLOperation
 
             try
             {
-                success = executor.execute(cqlQuery, queryParams);
+                CqlResult result = null;
+
+                if (session.usePreparedStatements())
+                {
+                    Integer stmntId = getPreparedStatement(client, cqlQuery);
+                    if (session.cqlVersion.startsWith("3"))
+                        result = client.execute_prepared_cql3_query(stmntId, queryParamsAsByteBuffer(queryParams), session.getConsistencyLevel());
+                    else
+                        result = client.execute_prepared_cql_query(stmntId, queryParamsAsByteBuffer(queryParams));
+                }
+                else
+                {
+                    if (formattedQuery == null)
+                        formattedQuery = formatCqlQuery(cqlQuery, queryParams);
+                    if (session.cqlVersion.startsWith("3"))
+                        result = client.execute_cql3_query(ByteBuffer.wrap(formattedQuery.getBytes()), Compression.NONE, session.getConsistencyLevel());
+                    else
+                        result = client.execute_cql_query(ByteBuffer.wrap(formattedQuery.getBytes()), Compression.NONE);
+                }
+
+                success = (result.rows.get(0).columns.size() != 0);
             }
             catch (Exception e)
             {
+
                 exceptionMessage = getExceptionMessage(e);
                 success = false;
             }
@@ -122,15 +142,5 @@ public class CqlReader extends CQLOperation
         session.operations.getAndIncrement();
         session.keys.getAndIncrement();
         context.stop();
-    }
-
-    protected boolean validateThriftResult(CqlResult result)
-    {
-        return result.rows.get(0).columns.size() != 0;
-    }
-
-    protected boolean validateNativeResult(ResultMessage result)
-    {
-        return result instanceof ResultMessage.Rows && ((ResultMessage.Rows)result).result.size() != 0;
     }
 }

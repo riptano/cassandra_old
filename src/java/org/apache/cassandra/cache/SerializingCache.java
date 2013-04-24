@@ -154,7 +154,7 @@ public class SerializingCache<K, V> implements ICache<K, V>
         map.clear();
     }
 
-    public V get(K key)
+    public V get(Object key)
     {
         RefCountedMemory mem = map.get(key);
         if (mem == null)

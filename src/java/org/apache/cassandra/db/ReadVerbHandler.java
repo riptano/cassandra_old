@@ -17,6 +17,8 @@
  */
 package org.apache.cassandra.db;
 
+import java.io.IOException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,15 +41,22 @@ public class ReadVerbHandler implements IVerbHandler<ReadCommand>
             throw new RuntimeException("Cannot service reads while bootstrapping!");
         }
 
-        ReadCommand command = message.payload;
-        Table table = Table.open(command.table);
-        Row row = command.getRow(table);
+        try
+        {
+            ReadCommand command = message.payload;
+            Table table = Table.open(command.table);
+            Row row = command.getRow(table);
 
-        MessageOut<ReadResponse> reply = new MessageOut<ReadResponse>(MessagingService.Verb.REQUEST_RESPONSE,
-                                                                      getResponse(command, row),
-                                                                      ReadResponse.serializer);
-        Tracing.trace("Enqueuing response to {}", message.from);
-        MessagingService.instance().sendReply(reply, id, message.from);
+            MessageOut<ReadResponse> reply = new MessageOut<ReadResponse>(MessagingService.Verb.REQUEST_RESPONSE,
+                                                                          getResponse(command, row),
+                                                                          ReadResponse.serializer);
+            Tracing.trace("Enqueuing response to {}", message.from);
+            MessagingService.instance().sendReply(reply, id, message.from);
+        }
+        catch (IOException ex)
+        {
+            throw new RuntimeException(ex);
+        }
     }
 
     public static ReadResponse getResponse(ReadCommand command, Row row)

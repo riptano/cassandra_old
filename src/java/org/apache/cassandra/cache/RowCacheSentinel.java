@@ -19,8 +19,6 @@ package org.apache.cassandra.cache;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-import org.apache.cassandra.utils.ObjectSizes;
-
 import com.google.common.base.Objects;
 
 /**
@@ -55,11 +53,5 @@ public class RowCacheSentinel implements IRowCacheEntry
     public int hashCode()
     {
         return Objects.hashCode(sentinelId);
-    }
-
-    public long memorySize()
-    {
-        // Only long reference.
-        return ObjectSizes.getFieldSize(8);
     }
 }

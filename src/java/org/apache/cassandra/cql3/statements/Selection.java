@@ -117,8 +117,6 @@ public abstract class Selection
                 args.add(makeSelector(cfDef, rawArg, names, null));
 
             AbstractType<?> returnType = Functions.getReturnType(withFun.functionName, cfDef.cfm.ksName, cfDef.cfm.cfName);
-            if (returnType == null)
-                throw new InvalidRequestException(String.format("Unknown function '%s'", withFun.functionName));
             ColumnSpecification spec = makeFunctionSpec(cfDef, withFun, returnType);
             Function fun = Functions.get(withFun.functionName, args, spec);
             if (metadata != null)
@@ -250,23 +248,18 @@ public abstract class Selection
 
         public void add(IColumn c)
         {
-            current.add(isDead(c) ? null : value(c));
+            current.add(c == null || c.isMarkedForDelete() ? null : value(c));
             if (timestamps != null)
             {
-                timestamps[current.size() - 1] = isDead(c) ? -1 : c.timestamp();
+                timestamps[current.size() - 1] = c.timestamp();
             }
             if (ttls != null)
             {
                 int ttl = -1;
-                if (!isDead(c) && c instanceof ExpiringColumn)
+                if (c instanceof ExpiringColumn)
                     ttl = ((ExpiringColumn)c).getLocalDeletionTime() - (int) (System.currentTimeMillis() / 1000);
                 ttls[current.size() - 1] = ttl;
             }
-        }
-
-        private boolean isDead(IColumn c)
-        {
-            return c == null || c.isMarkedForDelete();
         }
 
         public void newRow() throws InvalidRequestException
@@ -373,10 +366,7 @@ public abstract class Selection
         public ByteBuffer compute(ResultSetBuilder rs)
         {
             if (isWritetime)
-            {
-                long ts = rs.timestamps[idx];
-                return ts >= 0 ? ByteBufferUtil.bytes(ts) : null;
-            }
+                return ByteBufferUtil.bytes(rs.timestamps[idx]);
 
             int ttl = rs.ttls[idx];
             return ttl > 0 ? ByteBufferUtil.bytes(ttl) : null;
@@ -384,7 +374,7 @@ public abstract class Selection
 
         public boolean isAssignableTo(ColumnSpecification receiver)
         {
-            return receiver.type.asCQL3Type().equals(isWritetime ? CQL3Type.Native.BIGINT : CQL3Type.Native.INT);
+            return receiver.type.equals(isWritetime ? LongType.instance : Int32Type.instance);
         }
     }
 

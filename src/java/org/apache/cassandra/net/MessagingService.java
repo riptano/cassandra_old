@@ -25,7 +25,6 @@ import java.lang.management.ManagementFactory;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousCloseException;
-import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ServerSocketChannel;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
@@ -881,20 +880,12 @@ public final class MessagingService implements MessagingServiceMBean
                 try
                 {
                     Socket socket = server.accept();
-                    if (authenticate(socket))
-                        new IncomingTcpConnection(socket).start();
-                    else
-                        socket.close();
+                    new IncomingTcpConnection(socket).start();
                 }
                 catch (AsynchronousCloseException e)
                 {
                     // this happens when another thread calls close().
                     logger.info("MessagingService shutting down server thread.");
-                    break;
-                }
-                catch (ClosedChannelException e)
-                {
-                    logger.debug("MessagingService server thread already closed.");
                     break;
                 }
                 catch (IOException e)
@@ -907,11 +898,6 @@ public final class MessagingService implements MessagingServiceMBean
         void close() throws IOException
         {
             server.close();
-        }
-
-        private boolean authenticate(Socket socket)
-        {
-            return DatabaseDescriptor.getInternodeAuthenticator().authenticate(socket.getInetAddress(), socket.getPort());
         }
     }
 

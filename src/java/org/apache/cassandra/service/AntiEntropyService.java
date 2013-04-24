@@ -40,6 +40,7 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.compaction.AbstractCompactedRow;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.dht.AbstractBounds;
+import org.apache.cassandra.dht.RandomPartitioner;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.gms.*;
@@ -175,7 +176,7 @@ public class AntiEntropyService
                 throw new IllegalArgumentException("Requested range intersects a local range but is not fully contained in one; this would lead to imprecise repair");
             }
         }
-        if (rangeSuperSet == null || !replicaSets.containsKey(rangeSuperSet))
+        if (rangeSuperSet == null || !replicaSets.containsKey(toRepair))
             return Collections.emptySet();
 
         Set<InetAddress> neighbors = new HashSet<InetAddress>(replicaSets.get(rangeSuperSet));
@@ -295,7 +296,7 @@ public class AntiEntropyService
 
         public void prepare(ColumnFamilyStore cfs)
         {
-            if (!tree.partitioner().preservesOrder())
+            if (tree.partitioner() instanceof RandomPartitioner)
             {
                 // You can't beat an even tree distribution for md5
                 tree.init();

@@ -30,7 +30,6 @@ import org.apache.cassandra.db.marshal.ListType;
 import org.apache.cassandra.db.marshal.MarshalException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.UUIDGen;
 
@@ -70,22 +69,17 @@ public abstract class Lists
             {
                 Term t = rt.prepare(valueSpec);
 
-                if (t instanceof Term.NonTerminal)
-                    throw new InvalidRequestException(String.format("Invalid list literal for %s: bind variables are not supported inside collection literals", receiver));
+                if (!(t instanceof Constants.Value))
+                {
+                    if (t instanceof Term.NonTerminal)
+                        throw new InvalidRequestException(String.format("Invalid list literal for %s: bind variables are not supported inside collection literals", receiver));
+                    else
+                        throw new InvalidRequestException(String.format("Invalid list literal for %s: nested collections are not supported", receiver));
+                }
 
-                // We don't allow prepared marker in collections, nor nested collections (for the later, prepare will throw an exception)
+                // We don't allow prepared marker in collections, nor nested collections
                 assert t instanceof Constants.Value;
-                ByteBuffer bytes = ((Constants.Value)t).bytes;
-                if (bytes == null)
-                    throw new InvalidRequestException("null is not supported inside collections");
-
-                // We don't support value > 64K because the serialization format encode the length as an unsigned short.
-                if (bytes.remaining() > FBUtilities.MAX_UNSIGNED_SHORT)
-                    throw new InvalidRequestException(String.format("List value is too long. List values are limited to %d bytes but %d bytes value provided",
-                                                                    FBUtilities.MAX_UNSIGNED_SHORT,
-                                                                    bytes.remaining()));
-
-                values.add(bytes);
+                values.add(((Constants.Value)t).bytes);
             }
             return new Value(values);
         }
@@ -167,7 +161,7 @@ public abstract class Lists
         public Value bind(List<ByteBuffer> values) throws InvalidRequestException
         {
             ByteBuffer value = values.get(bindIndex);
-            return value == null ? null : Value.fromSerialized(value, (ListType)receiver.type);
+            return Value.fromSerialized(value, (ListType)receiver.type);
 
         }
     }
@@ -253,33 +247,17 @@ public abstract class Lists
 
         public void execute(ByteBuffer rowKey, ColumnFamily cf, ColumnNameBuilder prefix, UpdateParameters params) throws InvalidRequestException
         {
-            ByteBuffer index = idx.bindAndGet(params.variables);
-            ByteBuffer value = t.bindAndGet(params.variables);
-
-            if (index == null)
-                throw new InvalidRequestException("Invalid null value for list index");
+            Term.Terminal index = idx.bind(params.variables);
+            Term.Terminal value = t.bind(params.variables);
+            assert index instanceof Constants.Value && value instanceof Constants.Value;
 
             List<Pair<ByteBuffer, IColumn>> existingList = params.getPrefetchedList(rowKey, columnName.key);
-            int idx = ByteBufferUtil.toInt(index);
+            int idx = ByteBufferUtil.toInt(((Constants.Value)index).bytes);
             if (idx < 0 || idx >= existingList.size())
                 throw new InvalidRequestException(String.format("List index %d out of bound, list has size %d", idx, existingList.size()));
 
             ByteBuffer elementName = existingList.get(idx).right.name();
-
-            if (value == null)
-            {
-                cf.addColumn(params.makeTombstone(elementName));
-            }
-            else
-            {
-                // We don't support value > 64K because the serialization format encode the length as an unsigned short.
-                if (value.remaining() > FBUtilities.MAX_UNSIGNED_SHORT)
-                    throw new InvalidRequestException(String.format("List value is too long. List values are limited to %d bytes but %d bytes value provided",
-                                                                    FBUtilities.MAX_UNSIGNED_SHORT,
-                                                                    value.remaining()));
-
-                cf.addColumn(params.makeColumn(elementName, value));
-            }
+            cf.addColumn(params.makeColumn(elementName, ((Constants.Value)value).bytes));
         }
     }
 
@@ -298,12 +276,8 @@ public abstract class Lists
         static void doAppend(Term t, ColumnFamily cf, ColumnNameBuilder columnName, UpdateParameters params) throws InvalidRequestException
         {
             Term.Terminal value = t.bind(params.variables);
-            // If we append null, do nothing. Note that for Setter, we've
-            // already removed the previous value so we're good here too
-            if (value == null)
-                return;
-
             assert value instanceof Lists.Value;
+
             List<ByteBuffer> toAdd = ((Lists.Value)value).elements;
             for (int i = 0; i < toAdd.size(); i++)
             {
@@ -325,10 +299,8 @@ public abstract class Lists
         public void execute(ByteBuffer rowKey, ColumnFamily cf, ColumnNameBuilder prefix, UpdateParameters params) throws InvalidRequestException
         {
             Term.Terminal value = t.bind(params.variables);
-            if (value == null)
-                return;
-
             assert value instanceof Lists.Value;
+
             long time = PrecisionTime.REFERENCE_TIME - (System.currentTimeMillis() - PrecisionTime.REFERENCE_TIME);
 
             List<ByteBuffer> toAdd = ((Lists.Value)value).elements;
@@ -364,9 +336,6 @@ public abstract class Lists
                 return;
 
             Term.Terminal value = t.bind(params.variables);
-            if (value == null)
-                return;
-
             assert value instanceof Lists.Value;
 
             // Note: below, we will call 'contains' on this toDiscard list for each element of existingList.
@@ -399,9 +368,6 @@ public abstract class Lists
         public void execute(ByteBuffer rowKey, ColumnFamily cf, ColumnNameBuilder prefix, UpdateParameters params) throws InvalidRequestException
         {
             Term.Terminal index = t.bind(params.variables);
-            if (index == null)
-                throw new InvalidRequestException("Invalid null value for list index");
-
             assert index instanceof Constants.Value;
 
             List<Pair<ByteBuffer, IColumn>> existingList = params.getPrefetchedList(rowKey, columnName.key);

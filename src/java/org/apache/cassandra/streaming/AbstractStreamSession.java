@@ -27,6 +27,7 @@ import org.slf4j.Logger;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.gms.*;
+import org.apache.cassandra.utils.Pair;
 
 public abstract class AbstractStreamSession implements IEndpointStateChangeSubscriber, IFailureDetectionEventListener
 {

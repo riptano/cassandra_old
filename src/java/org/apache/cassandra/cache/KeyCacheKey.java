@@ -22,7 +22,6 @@ import java.util.Arrays;
 
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.cassandra.utils.Pair;
 
 public class KeyCacheKey implements CacheKey
@@ -48,12 +47,6 @@ public class KeyCacheKey implements CacheKey
     public String toString()
     {
         return String.format("KeyCacheKey(%s, %s)", desc, ByteBufferUtil.bytesToHex(ByteBuffer.wrap(key)));
-    }
-
-    public long memorySize()
-    {
-        long fields = ObjectSizes.getReferenceSize() + ObjectSizes.getSizeWithRef(key);
-        return ObjectSizes.getFieldSize(fields);
     }
 
     @Override

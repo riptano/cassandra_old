@@ -211,23 +211,12 @@ public abstract class AbstractReplicationStrategy
 
     public abstract void validateOptions() throws ConfigurationException;
 
-    /*
-     * The options recognized by the strategy.
-     * The empty collection means that no options are accepted, but null means
-     * that any option is accepted.
-     */
-    public Collection<String> recognizedOptions()
-    {
-        // We default to null for backward compatibility sake
-        return null;
-    }
-
-    private static AbstractReplicationStrategy createInternal(String table,
-                                                              Class<? extends AbstractReplicationStrategy> strategyClass,
-                                                              TokenMetadata tokenMetadata,
-                                                              IEndpointSnitch snitch,
-                                                              Map<String, String> strategyOptions)
-        throws ConfigurationException
+    public static AbstractReplicationStrategy createReplicationStrategy(String table,
+                                                                        Class<? extends AbstractReplicationStrategy> strategyClass,
+                                                                        TokenMetadata tokenMetadata,
+                                                                        IEndpointSnitch snitch,
+                                                                        Map<String, String> strategyOptions)
+            throws ConfigurationException
     {
         AbstractReplicationStrategy strategy;
         Class [] parameterTypes = new Class[] {String.class, TokenMetadata.class, IEndpointSnitch.class, Map.class};
@@ -238,61 +227,24 @@ public abstract class AbstractReplicationStrategy
         }
         catch (Exception e)
         {
-            throw new ConfigurationException("Error constructing replication strategy class", e);
+            throw new RuntimeException(e);
         }
+
+        // Throws Config Exception if strat_opts don't contain required info
+        strategy.validateOptions();
+
         return strategy;
     }
 
     public static AbstractReplicationStrategy createReplicationStrategy(String table,
-                                                                        Class<? extends AbstractReplicationStrategy> strategyClass,
+                                                                        String strategyClassName,
                                                                         TokenMetadata tokenMetadata,
                                                                         IEndpointSnitch snitch,
                                                                         Map<String, String> strategyOptions)
+            throws ConfigurationException
     {
-        try
-        {
-            AbstractReplicationStrategy strategy = createInternal(table, strategyClass, tokenMetadata, snitch, strategyOptions);
-
-            // Because we used to not properly validate unrecognized options, we only log a warning if we find one.
-            try
-            {
-                strategy.validateExpectedOptions();
-            }
-            catch (ConfigurationException e)
-            {
-                logger.warn("Ignoring {}", e.getMessage());
-            }
-
-            strategy.validateOptions();
-            return strategy;
-        }
-        catch (ConfigurationException e)
-        {
-            // If that happens at this point, there is nothing we can do about it.
-            throw new RuntimeException();
-        }
-    }
-
-    public static void validateReplicationStrategy(String table,
-                                                   String strategyClassName,
-                                                   TokenMetadata tokenMetadata,
-                                                   IEndpointSnitch snitch,
-                                                   Map<String, String> strategyOptions) throws ConfigurationException
-    {
-        AbstractReplicationStrategy strategy = createInternal(table, getClass(strategyClassName), tokenMetadata, snitch, strategyOptions);
-        strategy.validateExpectedOptions();
-        strategy.validateOptions();
-    }
-
-    // For backward compatibility sake on the thrift side
-    public static void validateReplicationStrategyIgnoreUnexpected(String table,
-                                                                   Class<? extends AbstractReplicationStrategy> strategyClass,
-                                                                   TokenMetadata tokenMetadata,
-                                                                   IEndpointSnitch snitch,
-                                                                   Map<String, String> strategyOptions) throws ConfigurationException
-    {
-        AbstractReplicationStrategy strategy = createInternal(table, strategyClass, tokenMetadata, snitch, strategyOptions);
-        strategy.validateOptions();
+        Class<AbstractReplicationStrategy> c = getClass(strategyClassName);
+        return createReplicationStrategy(table, c, tokenMetadata, snitch, strategyOptions);
     }
 
     public static Class<AbstractReplicationStrategy> getClass(String cls) throws ConfigurationException
@@ -321,12 +273,8 @@ public abstract class AbstractReplicationStrategy
         }
     }
 
-    private void validateExpectedOptions() throws ConfigurationException
+    protected void validateExpectedOptions(Collection<String> expectedOptions) throws ConfigurationException
     {
-        Collection expectedOptions = recognizedOptions();
-        if (expectedOptions == null)
-            return;
-
         for (String key : configOptions.keySet())
         {
             if (!expectedOptions.contains(key))

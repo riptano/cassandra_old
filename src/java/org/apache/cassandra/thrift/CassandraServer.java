@@ -52,6 +52,7 @@ import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.UnauthorizedException;
 import org.apache.cassandra.io.util.DataOutputBuffer;
+import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.locator.DynamicEndpointSnitch;
 import org.apache.cassandra.scheduler.IRequestScheduler;
 import org.apache.cassandra.service.*;
@@ -109,6 +110,10 @@ public class CassandraServer implements Cassandra.Iface
         catch (RequestExecutionException e)
         {
             ThriftConversion.rethrow(e);
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
         }
 
         for (Row row: rows)
@@ -972,6 +977,10 @@ public class CassandraServer implements Cassandra.Iface
         {
             throw ThriftConversion.toThrift(e);
         }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
+        }
         finally
         {
             Tracing.instance().stopSession();
@@ -1056,6 +1065,10 @@ public class CassandraServer implements Cassandra.Iface
         {
             throw ThriftConversion.toThrift(e);
         }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
+        }
         finally
         {
             Tracing.instance().stopSession();
@@ -1131,6 +1144,10 @@ public class CassandraServer implements Cassandra.Iface
         catch (org.apache.cassandra.exceptions.UnavailableException e)
         {
             throw ThriftConversion.toThrift(e);
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
         }
         finally
         {
@@ -1278,7 +1295,7 @@ public class CassandraServer implements Cassandra.Iface
             cState.hasKeyspaceAccess(keyspace, Permission.CREATE);
             cf_def.unsetId(); // explicitly ignore any id set by client (Hector likes to set zero)
             CFMetaData cfm = CFMetaData.fromThrift(cf_def);
-            CFMetaData.validateCompactionOptions(cfm.compactionStrategyClass, cfm.compactionStrategyOptions, false);
+            CFMetaData.validateCompactionOptions(cfm.compactionStrategyClass, cfm.compactionStrategyOptions);
 
             cfm.addDefaultIndexNames();
             MigrationManager.announceNewColumnFamily(cfm);
@@ -1320,6 +1337,13 @@ public class CassandraServer implements Cassandra.Iface
             ThriftValidation.validateKeyspaceNotSystem(ks_def.name);
             state().hasAllKeyspacesAccess(Permission.CREATE);
             ThriftValidation.validateKeyspaceNotYetExisting(ks_def.name);
+
+            // trial run to let ARS validate class + per-class options
+            AbstractReplicationStrategy.createReplicationStrategy(ks_def.name,
+                    AbstractReplicationStrategy.getClass(ks_def.strategy_class),
+                    StorageService.instance.getTokenMetadata(),
+                    DatabaseDescriptor.getEndpointSnitch(),
+                    ks_def.getStrategy_options());
 
             // generate a meaningful error if the user setup keyspace and/or column definition incorrectly
             for (CfDef cf : ks_def.cf_defs)
@@ -1408,7 +1432,7 @@ public class CassandraServer implements Cassandra.Iface
 
             CFMetaData.applyImplicitDefaults(cf_def);
             CFMetaData cfm = CFMetaData.fromThrift(cf_def);
-            CFMetaData.validateCompactionOptions(cfm.compactionStrategyClass, cfm.compactionStrategyOptions, false);
+            CFMetaData.validateCompactionOptions(cfm.compactionStrategyClass, cfm.compactionStrategyOptions);
             cfm.addDefaultIndexNames();
             MigrationManager.announceColumnFamilyUpdate(cfm);
             return Schema.instance.getVersion().toString();
@@ -1472,8 +1496,10 @@ public class CassandraServer implements Cassandra.Iface
 
     public void set_keyspace(String keyspace) throws InvalidRequestException, TException
     {
+        validateLogin();
         try
         {
+            ThriftValidation.validateTable(keyspace);
             state().setKeyspace(keyspace);
         }
         catch (RequestValidationException e)

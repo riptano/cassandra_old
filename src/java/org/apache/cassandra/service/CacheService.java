@@ -352,8 +352,7 @@ public class CacheService implements CacheServiceMBean
             {
                 DecoratedKey dk = cfs.partitioner.decorateKey(key);
                 ColumnFamily data = cfs.getTopLevelColumns(QueryFilter.getIdentityFilter(dk, new QueryPath(cfs.columnFamily)), Integer.MIN_VALUE, true);
-                if (data != null)
-                    rowCache.put(new RowCacheKey(cfs.metadata.cfId, dk), data);
+                rowCache.put(new RowCacheKey(cfs.metadata.cfId, dk), data);
             }
         }
     }

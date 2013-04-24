@@ -23,10 +23,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.Table;
+import org.apache.cassandra.exceptions.UnavailableException;
+import org.apache.cassandra.gms.FailureDetector;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.WriteType;
@@ -48,7 +51,7 @@ public class WriteResponseHandler extends AbstractWriteResponseHandler
                                 WriteType writeType)
     {
         super(table, writeEndpoints, pendingEndpoints, consistencyLevel, callback, writeType);
-        responses = new AtomicInteger(totalBlockFor());
+        responses = new AtomicInteger(consistencyLevel.blockFor(table));
     }
 
     public WriteResponseHandler(InetAddress endpoint, WriteType writeType, Runnable callback)
@@ -69,7 +72,7 @@ public class WriteResponseHandler extends AbstractWriteResponseHandler
 
     protected int ackCount()
     {
-        return totalBlockFor() - responses.get();
+        return consistencyLevel.blockFor(table) - responses.get();
     }
 
     public boolean isLatencyForSnitch()

@@ -107,9 +107,7 @@ public class ClientState
 
     public void setKeyspace(String ks) throws InvalidRequestException
     {
-        // Skip keyspace validation for non-authenticated users. Apparently, some client libraries
-        // call set_keyspace() before calling login(), and we have to handle that.
-        if (user != null && Schema.instance.getKSMetaData(ks) == null)
+        if (Schema.instance.getKSMetaData(ks) == null)
             throw new InvalidRequestException("Keyspace '" + ks + "' does not exist");
         keyspace = ks;
     }

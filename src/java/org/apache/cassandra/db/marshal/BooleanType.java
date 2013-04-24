@@ -20,6 +20,7 @@ package org.apache.cassandra.db.marshal;
 import java.nio.ByteBuffer;
 
 import org.apache.cassandra.cql.jdbc.JdbcBoolean;
+import org.apache.cassandra.cql3.Constants;
 import org.apache.cassandra.cql3.CQL3Type;
 
 public class BooleanType extends AbstractType<Boolean>

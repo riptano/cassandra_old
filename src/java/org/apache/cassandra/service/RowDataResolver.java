@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.service;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -30,12 +31,14 @@ import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.db.filter.QueryPath;
+import org.apache.cassandra.db.filter.SliceQueryFilter;
 import org.apache.cassandra.net.IAsyncResult;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.CloseableIterator;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.IFilter;
 
 public class RowDataResolver extends AbstractRowResolver
 {
@@ -56,7 +59,7 @@ public class RowDataResolver extends AbstractRowResolver
     * as full data reads.  In this case we need to compute the most recent version
     * of each column, and send diffs to out-of-date replicas.
     */
-    public Row resolve() throws DigestMismatchException
+    public Row resolve() throws DigestMismatchException, IOException
     {
         if (logger.isDebugEnabled())
             logger.debug("resolving " + replies.size() + " responses");
@@ -162,7 +165,7 @@ public class RowDataResolver extends AbstractRowResolver
         return ColumnFamilyStore.removeDeleted(resolved, Integer.MIN_VALUE);
     }
 
-    public Row getData()
+    public Row getData() throws IOException
     {
         return replies.iterator().next().payload.row();
     }

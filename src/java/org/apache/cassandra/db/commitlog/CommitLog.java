@@ -188,6 +188,13 @@ public class CommitLog implements CommitLogMBean
      */
     public void add(RowMutation rm)
     {
+        long totalSize = RowMutation.serializer.serializedSize(rm, MessagingService.current_version) + CommitLogSegment.ENTRY_OVERHEAD_SIZE;
+        if (totalSize > DatabaseDescriptor.getCommitLogSegmentSize())
+        {
+            logger.warn("Skipping commitlog append of extremely large mutation ({} bytes)", totalSize);
+            return;
+        }
+
         executor.add(new LogRecordAdder(rm));
     }
 
@@ -296,6 +303,27 @@ public class CommitLog implements CommitLogMBean
     }
 
     /**
+     * Forces a new segment file to be allocated and activated. Used mainly by truncate.
+     */
+    public void forceNewSegment() throws ExecutionException, InterruptedException
+    {
+        logger.debug("Forcing new segment creation");
+
+        Callable<?> task = new Callable()
+        {
+            public Object call()
+            {
+                if (activeSegment.position() > 0)
+                    activateNextSegment();
+
+                return null;
+            }
+        };
+
+        executor.submit(task).get();
+    }
+
+    /**
      * Fetches a new segment file from the allocator and activates it.
      *
      * @return the newly activated segment
@@ -343,14 +371,7 @@ public class CommitLog implements CommitLogMBean
 
         public void run()
         {
-            long totalSize = RowMutation.serializer.serializedSize(rowMutation, MessagingService.current_version) + CommitLogSegment.ENTRY_OVERHEAD_SIZE;
-            if (totalSize > DatabaseDescriptor.getCommitLogSegmentSize())
-            {
-                logger.warn("Skipping commitlog append of extremely large mutation ({} bytes)", totalSize);
-                return;
-            }
-
-            if (!activeSegment.hasCapacityFor(totalSize))
+            if (!activeSegment.hasCapacityFor(rowMutation))
             {
                 CommitLogSegment oldSegment = activeSegment;
                 activateNextSegment();

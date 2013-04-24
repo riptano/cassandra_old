@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -314,8 +315,6 @@ public class DefsTable
             // store deserialized keyspaces into new place
             save(keyspaces);
 
-            flushSchemaCFs();
-
             logger.info("Truncating deprecated system column families (migrations, schema)...");
             dropColumnFamily(Table.SYSTEM_KS, OLD_MIGRATIONS_CF);
             dropColumnFamily(Table.SYSTEM_KS, OLD_SCHEMA_CF);
@@ -533,10 +532,18 @@ public class DefsTable
 
         Schema.instance.setTableDefinition(newKsm);
 
-        if (!StorageService.instance.isClientMode())
+        try
         {
-            Table.open(newState.name).createReplicationStrategy(newKsm);
-            MigrationManager.instance.notifyUpdateKeyspace(newKsm);
+            if (!StorageService.instance.isClientMode())
+            {
+                Table.open(newState.name).createReplicationStrategy(newKsm);
+                MigrationManager.instance.notifyUpdateKeyspace(newKsm);
+            }
+        }
+        catch (ConfigurationException e)
+        {
+            // It's too late to throw a configuration exception, we should have catch those previously
+            throw new RuntimeException(e);
         }
     }
 

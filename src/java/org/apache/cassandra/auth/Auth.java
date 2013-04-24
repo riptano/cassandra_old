@@ -35,7 +35,6 @@ import org.apache.cassandra.locator.SimpleStrategy;
 import org.apache.cassandra.service.IMigrationListener;
 import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.service.StorageService;
-import org.apache.cassandra.utils.FBUtilities;
 
 public class Auth
 {
@@ -43,7 +42,7 @@ public class Auth
 
     public static final String DEFAULT_SUPERUSER_NAME = "cassandra";
 
-    public static final long SUPERUSER_SETUP_DELAY = Long.getLong("cassandra.superuser_setup_delay_ms", 10000);
+    private static final long SUPERUSER_SETUP_DELAY = 10; // seconds.
 
     public static final String AUTH_KS = "system_auth";
     public static final String USERS_CF = "users";
@@ -68,7 +67,7 @@ public class Auth
         String query = String.format("SELECT * FROM %s.%s WHERE name = '%s'", AUTH_KS, USERS_CF, escape(username));
         try
         {
-            return !QueryProcessor.process(query, consistencyForUser(username)).isEmpty();
+            return !QueryProcessor.process(query, ConsistencyLevel.QUORUM).isEmpty();
         }
         catch (RequestExecutionException e)
         {
@@ -87,7 +86,7 @@ public class Auth
         String query = String.format("SELECT super FROM %s.%s WHERE name = '%s'", AUTH_KS, USERS_CF, escape(username));
         try
         {
-            UntypedResultSet result = QueryProcessor.process(query, consistencyForUser(username));
+            UntypedResultSet result = QueryProcessor.process(query, ConsistencyLevel.QUORUM);
             return !result.isEmpty() && result.one().getBoolean("super");
         }
         catch (RequestExecutionException e)
@@ -110,7 +109,7 @@ public class Auth
                                              USERS_CF,
                                              escape(username),
                                              isSuper),
-                               consistencyForUser(username));
+                               ConsistencyLevel.QUORUM);
     }
 
     /**
@@ -125,7 +124,7 @@ public class Auth
                                              AUTH_KS,
                                              USERS_CF,
                                              escape(username)),
-                               consistencyForUser(username));
+                               ConsistencyLevel.QUORUM);
     }
 
     /**
@@ -145,27 +144,15 @@ public class Auth
         // the delay is here to give the node some time to see its peers - to reduce
         // "Skipped default superuser setup: some nodes were not ready" log spam.
         // It's the only reason for the delay.
-        if (DatabaseDescriptor.getSeeds().contains(FBUtilities.getBroadcastAddress()) || !DatabaseDescriptor.isAutoBootstrap())
-        {
-            StorageService.tasks.schedule(new Runnable()
+        StorageService.tasks.schedule(new Runnable()
+                                      {
+                                          public void run()
                                           {
-                                              public void run()
-                                              {
-                                                  setupDefaultSuperuser();
-                                              }
-                                          },
-                                          SUPERUSER_SETUP_DELAY,
-                                          TimeUnit.MILLISECONDS);
-        }
-    }
-
-    // Only use QUORUM cl for the default superuser.
-    private static ConsistencyLevel consistencyForUser(String username)
-    {
-        if (username.equals(DEFAULT_SUPERUSER_NAME))
-            return ConsistencyLevel.QUORUM;
-        else
-            return ConsistencyLevel.ONE;
+                                              setupDefaultSuperuser();
+                                          }
+                                      },
+                                      SUPERUSER_SETUP_DELAY,
+                                      TimeUnit.SECONDS);
     }
 
     private static void setupAuthKeyspace()
@@ -190,7 +177,7 @@ public class Auth
         {
             try
             {
-                QueryProcessor.process(USERS_CF_SCHEMA, ConsistencyLevel.ANY);
+                QueryProcessor.process(USERS_CF_SCHEMA, ConsistencyLevel.ONE);
             }
             catch (RequestExecutionException e)
             {

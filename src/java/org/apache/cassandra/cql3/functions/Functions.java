@@ -17,6 +17,8 @@
  */
 package org.apache.cassandra.cql3.functions;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 
 import com.google.common.collect.ArrayListMultimap;
@@ -110,7 +112,7 @@ public abstract class Functions
 
     private static void validateTypes(Function fun, List<? extends AssignementTestable> providedArgs, ColumnSpecification receiver) throws InvalidRequestException
     {
-        if (!receiver.type.asCQL3Type().equals(fun.returnType().asCQL3Type()))
+        if (!receiver.type.equals(fun.returnType()))
             throw new InvalidRequestException(String.format("Type error: cannot assign result of function %s (type %s) to %s (type %s)", fun.name(), fun.returnType().asCQL3Type(), receiver, receiver.type.asCQL3Type()));
 
         if (providedArgs.size() != fun.argsType().size())
@@ -133,7 +135,7 @@ public abstract class Functions
 
     private static boolean isValidType(Function fun, List<? extends AssignementTestable> providedArgs, ColumnSpecification receiver)
     {
-        if (!receiver.type.asCQL3Type().equals(fun.returnType().asCQL3Type()))
+        if (!receiver.type.equals(fun.returnType()))
             return false;
 
         if (providedArgs.size() != fun.argsType().size())

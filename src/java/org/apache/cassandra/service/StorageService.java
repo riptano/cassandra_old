@@ -145,9 +145,9 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return getRangesForEndpoint(table, FBUtilities.getBroadcastAddress());
     }
 
-    public Collection<Range<Token>> getLocalPrimaryRanges(String keyspace)
+    public Collection<Range<Token>> getLocalPrimaryRanges()
     {
-        return getPrimaryRangesForEndpoint(keyspace, FBUtilities.getBroadcastAddress());
+        return getPrimaryRangesForEndpoint(FBUtilities.getBroadcastAddress());
     }
 
     @Deprecated
@@ -343,7 +343,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         if (daemon == null)
         {
-            throw new IllegalStateException("No configured daemon");
+            throw new IllegalStateException("No configured  daemon");
         }
         daemon.nativeServer.stop();
     }
@@ -355,12 +355,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             return false;
         }
         return daemon.nativeServer.isRunning();
-    }
-
-    private void shutdownClientServers()
-    {
-        stopRPCServer();
-        stopNativeTransport();
     }
 
     public void stopClient()
@@ -381,38 +375,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public synchronized void initClient() throws IOException, ConfigurationException
     {
-        // We don't wait, because we're going to actually try to work on
-        initClient(0);
-
-        try
-        {
-            // sleep a while to allow gossip to warm up (the other nodes need to know about this one before they can reply).
-            boolean isUp = false;
-            while (!isUp)
-            {
-                Thread.sleep(1000);
-                for (InetAddress address : Gossiper.instance.getLiveMembers())
-                {
-                    if (!Gossiper.instance.isFatClient(address))
-                    {
-                        isUp = true;
-                    }
-                }
-            }
-
-            // sleep until any schema migrations have finished
-            while (!MigrationManager.isReadyForBootstrap())
-            {
-                Thread.sleep(1000);
-            }
-        }
-        catch (InterruptedException e)
-        {
-            throw new AssertionError(e);
-        }
+        initClient(RING_DELAY);
     }
 
-    public synchronized void initClient(int ringDelay) throws IOException, ConfigurationException
+    public synchronized void initClient(int delay) throws IOException, ConfigurationException
     {
         if (initialized)
         {
@@ -425,14 +391,14 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         logger.info("Starting up client gossip");
         setMode(Mode.CLIENT, false);
         Gossiper.instance.register(this);
-        Gossiper.instance.register(migrationManager);
-        Gossiper.instance.start((int) (System.currentTimeMillis() / 1000)); // needed for node-ring gathering.
+        Gossiper.instance.start((int)(System.currentTimeMillis() / 1000)); // needed for node-ring gathering.
         Gossiper.instance.addLocalApplicationState(ApplicationState.NET_VERSION, valueFactory.networkVersion());
-
         MessagingService.instance().listen(FBUtilities.getLocalAddress());
+
+        // sleep a while to allow gossip to warm up (the other nodes need to know about this one before they can reply).
         try
         {
-           Thread.sleep(ringDelay);
+            Thread.sleep(delay);
         }
         catch (InterruptedException e)
         {
@@ -510,7 +476,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 if (mutationStage.isShutdown())
                     return; // drained already
 
-                shutdownClientServers();
+                stopRPCServer();
                 optionalTasks.shutdown();
                 Gossiper.instance.stop();
 
@@ -2133,10 +2099,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             cfStore.scrub();
     }
 
-    public void upgradeSSTables(String tableName, boolean excludeCurrentVersion, String... columnFamilies) throws IOException, ExecutionException, InterruptedException
+    public void upgradeSSTables(String tableName, String... columnFamilies) throws IOException, ExecutionException, InterruptedException
     {
         for (ColumnFamilyStore cfStore : getValidColumnFamilies(true, true, tableName, columnFamilies))
-            cfStore.sstablesRewrite(excludeCurrentVersion);
+            cfStore.sstablesRewrite();
     }
 
     public void forceTableCompaction(String tableName, String... columnFamilies) throws IOException, ExecutionException, InterruptedException
@@ -2340,35 +2306,20 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         jmxNotification.setUserData(userObject);
         sendNotification(jmxNotification);
     }
+
     public int forceRepairAsync(final String keyspace, final boolean isSequential, final boolean isLocal, final boolean primaryRange, final String... columnFamilies)
     {
-        final Collection<Range<Token>> ranges = primaryRange ? getLocalPrimaryRanges(keyspace) : getLocalRanges(keyspace);
-        return forceRepairAsync(keyspace, isSequential, isLocal, ranges, columnFamilies);
-    }
-
-    public int forceRepairAsync(final String keyspace, final boolean isSequential, final boolean isLocal, final Collection<Range<Token>> ranges, final String... columnFamilies)
-    {
-        if (Table.SYSTEM_KS.equals(keyspace) || Tracing.TRACE_KS.equals(keyspace) || ranges.isEmpty())
+        if (Table.SYSTEM_KS.equals(keyspace) || Tracing.TRACE_KS.equals(keyspace))
             return 0;
 
         final int cmd = nextRepairCommand.incrementAndGet();
+        final Collection<Range<Token>> ranges = primaryRange ? Collections.singletonList(getLocalPrimaryRange()) : getLocalRanges(keyspace);
         if (ranges.size() > 0)
         {
             new Thread(createRepairTask(cmd, keyspace, ranges, isSequential, isLocal, columnFamilies)).start();
         }
         return cmd;
     }
-
-    public int forceRepairRangeAsync(String beginToken, String endToken, final String tableName, boolean isSequential, boolean isLocal, final String... columnFamilies)
-    {
-        Token parsedBeginToken = getPartitioner().getTokenFactory().fromString(beginToken);
-        Token parsedEndToken = getPartitioner().getTokenFactory().fromString(endToken);
-
-        logger.info("starting user-requested repair of range ({}, {}] for keyspace {} and column families {}",
-                new Object[] {parsedBeginToken, parsedEndToken, tableName, columnFamilies});
-        return forceRepairAsync(tableName, isSequential, isLocal, Collections.singleton(new Range<Token>(parsedBeginToken, parsedEndToken)), columnFamilies);
-    }
-
 
     /**
      * Trigger proactive repair for a table and column families.
@@ -2383,7 +2334,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void forceTableRepairPrimaryRange(final String tableName, boolean isSequential, boolean  isLocal, final String... columnFamilies) throws IOException
     {
-        forceTableRepairRange(tableName, getLocalPrimaryRanges(tableName), isSequential, isLocal, columnFamilies);
+        forceTableRepairRange(tableName, getLocalPrimaryRanges(), isSequential, isLocal, columnFamilies);
     }
 
     public void forceTableRepairRange(String beginToken, String endToken, final String tableName, boolean isSequential, boolean  isLocal, final String... columnFamilies) throws IOException
@@ -2398,7 +2349,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void forceTableRepairRange(final String tableName, final Collection<Range<Token>> ranges, boolean isSequential, boolean  isLocal, final String... columnFamilies) throws IOException
     {
-        if (Schema.systemKeyspaceNames.contains(tableName))
+        if (Table.SYSTEM_KS.equals(tableName) || Tracing.TRACE_KS.equals(tableName))
             return;
         createRepairTask(nextRepairCommand.incrementAndGet(), tableName, ranges, isSequential, isLocal, columnFamilies).run();
     }
@@ -2416,17 +2367,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 List<AntiEntropyService.RepairFuture> futures = new ArrayList<AntiEntropyService.RepairFuture>(ranges.size());
                 for (Range<Token> range : ranges)
                 {
-                    AntiEntropyService.RepairFuture future;
-                    try
-                    {
-                        future = forceTableRepair(range, keyspace, isSequential, isLocal, columnFamilies);
-                    }
-                    catch (IllegalArgumentException e)
-                    {
-                        logger.error("Repair session failed:", e);
-                        sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
-                        continue;
-                    }
+                    AntiEntropyService.RepairFuture future = forceTableRepair(range, keyspace, isSequential, isLocal, columnFamilies);
                     if (future == null)
                         continue;
                     futures.add(future);
@@ -2511,36 +2452,17 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     }
 
     /**
-     * Get the "primary ranges" for the specified keyspace and endpoint.
-     * "Primary ranges" are the ranges that the node is responsible for storing replica primarily.
-     * The node that stores replica primarily is defined as the first node returned
-     * by {@link AbstractReplicationStrategy#calculateNaturalEndpoints}.
-     *
-     * @param keyspace
+     * Get the primary ranges for the specified endpoint.
      * @param ep endpoint we are interested in.
-     * @return primary ranges for the specified endpoint.
+     * @return collection of ranges for the specified endpoint.
      */
-    public Collection<Range<Token>> getPrimaryRangesForEndpoint(String keyspace, InetAddress ep)
+    public Collection<Range<Token>> getPrimaryRangesForEndpoint(InetAddress ep)
     {
-        AbstractReplicationStrategy strategy = Table.open(keyspace).getReplicationStrategy();
-        Collection<Range<Token>> primaryRanges = new HashSet<Range<Token>>();
-        TokenMetadata metadata = tokenMetadata.cloneOnlyTokenMap();
-        for (Token token : metadata.sortedTokens())
-        {
-            List<InetAddress> endpoints = strategy.calculateNaturalEndpoints(token, metadata);
-            if (endpoints.size() > 0 && endpoints.get(0).equals(ep))
-                primaryRanges.add(new Range<Token>(metadata.getPredecessor(token), token));
-        }
-        return primaryRanges;
+        return tokenMetadata.getPrimaryRangesFor(tokenMetadata.getTokens(ep));
     }
 
     /**
-     * Previously, primary range is the range that the node is responsible for and calculated
-     * only from the token assigned to the node.
-     * But this does not take replication strategy into account, and therefore returns insufficient
-     * range especially using NTS with replication only to certain DC(see CASSANDRA-5424).
-     *
-     * @deprecated
+     * Get the primary range for the specified endpoint.
      * @param ep endpoint we are interested in.
      * @return range for the specified endpoint.
      */
@@ -2773,7 +2695,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         {
             public void run()
             {
-                shutdownClientServers();
+                stopRPCServer();
                 Gossiper.instance.stop();
                 MessagingService.instance().shutdown();
                 StageManager.shutdownNow();
@@ -3358,7 +3280,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             return;
         }
         setMode(Mode.DRAINING, "starting drain process", true);
-        shutdownClientServers();
+        stopRPCServer();
         optionalTasks.shutdown();
         Gossiper.instance.stop();
 
@@ -3859,11 +3781,8 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public List<String> sampleKeyRange() // do not rename to getter - see CASSANDRA-4452 for details
     {
         List<DecoratedKey> keys = new ArrayList<DecoratedKey>();
-        for (Table keyspace : Table.nonSystem())
-        {
-            for (Range<Token> range : getPrimaryRangesForEndpoint(keyspace.name, FBUtilities.getBroadcastAddress()))
-                keys.addAll(keySamples(keyspace.getColumnFamilyStores(), range));
-        }
+        for (Range<Token> range : getLocalPrimaryRanges())
+            keys.addAll(keySamples(ColumnFamilyStore.allUserDefined(), range));
 
         List<String> sampledKeys = new ArrayList<String>(keys.size());
         for (DecoratedKey key : keys)

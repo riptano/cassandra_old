@@ -277,11 +277,6 @@ public class ColumnFamily extends AbstractColumnContainer implements IRowCacheEn
         return size;
     }
 
-    public long memorySize()
-    {
-        return ObjectSizes.measureDeep(this);
-    }
-
     public long maxTimestamp()
     {
         long maxTimestamp = deletionInfo().maxTimestamp();

@@ -19,15 +19,18 @@ package org.apache.cassandra.cache;
 
 import java.util.Set;
 
+import org.github.jamm.MemoryMeter;
+
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import com.googlecode.concurrentlinkedhashmap.EntryWeigher;
 
 /** Wrapper so CLHM can implement ICache interface.
  *  (this is what you get for making library classes final.) */
-public class ConcurrentLinkedHashCache<K extends IMeasurableMemory, V extends IMeasurableMemory> implements ICache<K, V>
+public class ConcurrentLinkedHashCache<K, V> implements ICache<K, V>
 {
     public static final int DEFAULT_CONCURENCY_LEVEL = 64;
     private final ConcurrentLinkedHashMap<K, V> map;
+    private static final MemoryMeter meter = new MemoryMeter().omitSharedBufferOverhead();
 
     private ConcurrentLinkedHashCache(ConcurrentLinkedHashMap<K, V> map)
     {
@@ -37,7 +40,7 @@ public class ConcurrentLinkedHashCache<K extends IMeasurableMemory, V extends IM
     /**
      * Initialize a cache with initial capacity with weightedCapacity
      */
-    public static <K extends IMeasurableMemory, V extends IMeasurableMemory> ConcurrentLinkedHashCache<K, V> create(long weightedCapacity, EntryWeigher<K, V> entryWeiger)
+    public static <K, V> ConcurrentLinkedHashCache<K, V> create(long weightedCapacity, EntryWeigher<K, V> entryWeiger)
     {
         ConcurrentLinkedHashMap<K, V> map = new ConcurrentLinkedHashMap.Builder<K, V>()
                                             .weigher(entryWeiger)
@@ -48,13 +51,13 @@ public class ConcurrentLinkedHashCache<K extends IMeasurableMemory, V extends IM
         return new ConcurrentLinkedHashCache<K, V>(map);
     }
 
-    public static <K extends IMeasurableMemory, V extends IMeasurableMemory> ConcurrentLinkedHashCache<K, V> create(long weightedCapacity)
+    public static <K, V> ConcurrentLinkedHashCache<K, V> create(long weightedCapacity)
     {
         return create(weightedCapacity, new EntryWeigher<K, V>()
         {
             public int weightOf(K key, V value)
             {
-                long size = key.memorySize() + value.memorySize();
+                long size = meter.measureDeep(key) + meter.measureDeep(value);
                 assert size < Integer.MAX_VALUE : "Serialized size cannot be more than 2GB/Integer.MAX_VALUE";
                 return (int) size;
             }

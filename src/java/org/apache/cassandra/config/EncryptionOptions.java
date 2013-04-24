@@ -27,7 +27,7 @@ public abstract class EncryptionOptions
     public String protocol = "TLS";
     public String algorithm = "SunX509";
     public String store_type = "JKS";
-    public boolean require_client_auth = false;
+    public Boolean require_client_auth = false;
 
     public static class ClientEncryptionOptions extends EncryptionOptions
     {

@@ -72,7 +72,7 @@ public class CounterMutation implements IMutation
         return consistency;
     }
 
-    public RowMutation makeReplicationMutation()
+    public RowMutation makeReplicationMutation() throws IOException
     {
         List<ReadCommand> readCommands = new LinkedList<ReadCommand>();
         for (ColumnFamily columnFamily : rowMutation.getColumnFamilies())

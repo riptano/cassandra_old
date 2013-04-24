@@ -122,7 +122,7 @@ public final class CompactionInfo implements Serializable
         private volatile boolean stopRequested = false;
         public abstract CompactionInfo getCompactionInfo();
         double load = StorageService.instance.getLoad();
-        double reportedSeverity = 0d;
+        boolean reportedSeverity = false;
 
         public void stop()
         {
@@ -138,9 +138,7 @@ public final class CompactionInfo implements Serializable
          */
         public void started()
         {
-            reportedSeverity = getCompactionInfo().getTotal() / load;
-            if (!StorageService.instance.reportSeverity(reportedSeverity))
-                reportedSeverity = 0d;
+            reportedSeverity = StorageService.instance.reportSeverity(getCompactionInfo().getTotal()/load);
         }
 
         /**
@@ -148,9 +146,9 @@ public final class CompactionInfo implements Serializable
          */
         public void finished()
         {
-            if (reportedSeverity != 0d)
-                StorageService.instance.reportSeverity(-(reportedSeverity));
-            reportedSeverity = 0d;
+            if (reportedSeverity)
+                StorageService.instance.reportSeverity(-(getCompactionInfo().getTotal()/load));
+            reportedSeverity = false;
         }
     }
 }

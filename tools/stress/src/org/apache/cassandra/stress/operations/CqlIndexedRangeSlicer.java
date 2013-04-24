@@ -27,31 +27,26 @@ import java.util.Collections;
 import java.util.List;
 
 import com.yammer.metrics.core.TimerContext;
-import org.apache.cassandra.cql3.ResultSet;
 import org.apache.cassandra.db.ColumnFamilyType;
 import org.apache.cassandra.stress.Session;
 import org.apache.cassandra.stress.util.CassandraClient;
 import org.apache.cassandra.stress.util.Operation;
-import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.thrift.Compression;
 import org.apache.cassandra.thrift.CqlResult;
 import org.apache.cassandra.thrift.CqlRow;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
-public class CqlIndexedRangeSlicer extends CQLOperation
+public class CqlIndexedRangeSlicer extends Operation
 {
     private static List<ByteBuffer> values = null;
     private static String cqlQuery = null;
-
-    private int lastQueryResultSize;
-    private int lastMaxKey;
 
     public CqlIndexedRangeSlicer(Session client, int idx)
     {
         super(client, idx);
     }
 
-    protected void run(CQLQueryExecutor executor) throws IOException
+    public void run(CassandraClient client) throws IOException
     {
         if (session.getColumnFamilyType() == ColumnFamilyType.Super)
             throw new RuntimeException("Super columns are not implemented for CQL");
@@ -61,14 +56,8 @@ public class CqlIndexedRangeSlicer extends CQLOperation
 
         if (cqlQuery == null)
         {
-            StringBuilder query = new StringBuilder("SELECT ");
-
-            if (session.cqlVersion.startsWith("2"))
-                query.append(session.getColumnsPerKey()).append(" ''..''");
-            else
-                query.append("*");
-
-            query.append(" FROM Standard1");
+            StringBuilder query = new StringBuilder("SELECT FIRST ").append(session.getColumnsPerKey())
+                 .append(" ''..'' FROM Standard1");
 
             if (session.cqlVersion.startsWith("2"))
                 query.append(" USING CONSISTENCY ").append(session.getConsistencyLevel());
@@ -90,6 +79,7 @@ public class CqlIndexedRangeSlicer extends CQLOperation
 
             boolean success = false;
             String exceptionMessage = null;
+            CqlResult results = null;
             String formattedQuery = null;
             List<String> queryParms = Collections.singletonList(getUnQuotedCqlBlob(startOffset, session.cqlVersion.startsWith("3")));
 
@@ -100,7 +90,25 @@ public class CqlIndexedRangeSlicer extends CQLOperation
 
                 try
                 {
-                    success = executor.execute(cqlQuery, queryParms);
+                    if (session.usePreparedStatements())
+                    {
+                        Integer stmntId = getPreparedStatement(client, cqlQuery);
+                        if (session.cqlVersion.startsWith("3"))
+                            results = client.execute_prepared_cql3_query(stmntId, queryParamsAsByteBuffer(queryParms), session.getConsistencyLevel());
+                        else
+                            results = client.execute_prepared_cql_query(stmntId, queryParamsAsByteBuffer(queryParms));
+                    }
+                    else
+                    {
+                        if (formattedQuery ==  null)
+                            formattedQuery = formatCqlQuery(cqlQuery, queryParms);
+                        if (session.cqlVersion.startsWith("3"))
+                            results = client.execute_cql3_query(ByteBuffer.wrap(formattedQuery.getBytes()), Compression.NONE, session.getConsistencyLevel());
+                        else
+                            results = client.execute_cql_query(ByteBuffer.wrap(formattedQuery.getBytes()), Compression.NONE);
+                    }
+
+                    success = (results.rows.size() != 0);
                 }
                 catch (Exception e)
                 {
@@ -118,13 +126,13 @@ public class CqlIndexedRangeSlicer extends CQLOperation
                                     (exceptionMessage == null) ? "" : "(" + exceptionMessage + ")"));
             }
 
-            received += lastQueryResultSize;
+            received += results.rows.size();
 
             // convert max key found back to an integer, and increment it
-            startOffset = String.format(format, (1 + lastMaxKey));
+            startOffset = String.format(format, (1 + getMaxKey(results.rows)));
 
             session.operations.getAndIncrement();
-            session.keys.getAndAdd(lastQueryResultSize);
+            session.keys.getAndAdd(results.rows.size());
             context.stop();
         }
     }
@@ -146,34 +154,5 @@ public class CqlIndexedRangeSlicer extends CQLOperation
         }
 
         return maxKey;
-    }
-
-    private int getMaxKey(ResultSet rs)
-    {
-        int maxKey = ByteBufferUtil.toInt(rs.rows.get(0).get(0));
-
-        for (List<ByteBuffer> row : rs.rows)
-        {
-            int currentKey = ByteBufferUtil.toInt(row.get(0));
-            if (currentKey > maxKey)
-                maxKey = currentKey;
-        }
-
-        return maxKey;
-    }
-
-    protected boolean validateThriftResult(CqlResult result)
-    {
-        lastQueryResultSize = result.rows.size();
-        lastMaxKey = getMaxKey(result.rows);
-        return lastQueryResultSize != 0;
-    }
-
-    protected boolean validateNativeResult(ResultMessage result)
-    {
-        assert result instanceof ResultMessage.Rows;
-        lastQueryResultSize = ((ResultMessage.Rows)result).result.size();
-        lastMaxKey = getMaxKey(((ResultMessage.Rows)result).result);
-        return lastQueryResultSize != 0;
     }
 }
