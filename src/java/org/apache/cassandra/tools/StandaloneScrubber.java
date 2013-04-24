@@ -22,6 +22,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
+import org.apache.cassandra.db.compaction.SizeTieredCompactionStrategyOptions;
 import org.apache.commons.cli.*;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -55,6 +56,10 @@ public class StandaloneScrubber
         Options options = Options.parseArgs(args);
         try
         {
+            // Migrate sstables from pre-#2749 to the correct location
+            if (Directories.sstablesNeedsMigration())
+                Directories.migrateSSTables();
+
             // load keyspace descriptions.
             DatabaseDescriptor.loadSchemas();
 
@@ -137,7 +142,7 @@ public class StandaloneScrubber
                         }
 
                         // Remove the sstable (it's been copied by scrub and snapshotted)
-                        sstable.markCompacted();
+                        sstable.markObsolete();
                         sstable.releaseReference();
                     }
                     catch (Exception e)

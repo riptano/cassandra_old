@@ -22,6 +22,7 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.util.Comparator;
 import java.util.Iterator;
+import java.nio.ByteBuffer;
 
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.ISSTableColumnIterator;
@@ -76,41 +77,42 @@ public interface IDiskAtomFilter
     public int getLiveCount(ColumnFamily cf);
 
     public IDiskAtomFilter cloneShallow();
+    public boolean maySelectPrefix(Comparator<ByteBuffer> cmp, ByteBuffer prefix);
 
     public static class Serializer implements IVersionedSerializer<IDiskAtomFilter>
     {
         public static Serializer instance = new Serializer();
 
-        public void serialize(IDiskAtomFilter filter, DataOutput dos, int version) throws IOException
+        public void serialize(IDiskAtomFilter filter, DataOutput out, int version) throws IOException
         {
             if (filter instanceof SliceQueryFilter)
             {
-                dos.writeByte(0);
-                SliceQueryFilter.serializer.serialize((SliceQueryFilter)filter, dos, version);
+                out.writeByte(0);
+                SliceQueryFilter.serializer.serialize((SliceQueryFilter)filter, out, version);
             }
             else
             {
-                dos.writeByte(1);
-                NamesQueryFilter.serializer.serialize((NamesQueryFilter)filter, dos, version);
+                out.writeByte(1);
+                NamesQueryFilter.serializer.serialize((NamesQueryFilter)filter, out, version);
             }
         }
 
-        public IDiskAtomFilter deserialize(DataInput dis, int version) throws IOException
+        public IDiskAtomFilter deserialize(DataInput in, int version) throws IOException
         {
             throw new UnsupportedOperationException();
         }
 
-        public IDiskAtomFilter deserialize(DataInput dis, int version, AbstractType<?> comparator) throws IOException
+        public IDiskAtomFilter deserialize(DataInput in, int version, AbstractType<?> comparator) throws IOException
         {
-            int type = dis.readByte();
+            int type = in.readByte();
             if (type == 0)
             {
-                return SliceQueryFilter.serializer.deserialize(dis, version);
+                return SliceQueryFilter.serializer.deserialize(in, version);
             }
             else
             {
                 assert type == 1;
-                return NamesQueryFilter.serializer.deserialize(dis, version, comparator);
+                return NamesQueryFilter.serializer.deserialize(in, version, comparator);
             }
         }
 

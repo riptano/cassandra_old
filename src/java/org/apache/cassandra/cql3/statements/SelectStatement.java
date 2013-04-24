@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.cql3.statements;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
@@ -31,12 +30,8 @@ import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.db.*;
-import org.apache.cassandra.db.context.CounterContext;
 import org.apache.cassandra.db.filter.*;
-import org.apache.cassandra.db.index.SecondaryIndex;
-import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.*;
@@ -52,7 +47,6 @@ import org.apache.cassandra.thrift.ThriftValidation;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
-import org.apache.cassandra.utils.UUIDGen;
 
 /**
  * Encapsulates a completely parsed SELECT query, including the target
@@ -71,12 +65,16 @@ public class SelectStatement implements CQLStatement
     private final Restriction[] keyRestrictions;
     private final Restriction[] columnRestrictions;
     private final Map<CFDefinition.Name, Restriction> metadataRestrictions = new HashMap<CFDefinition.Name, Restriction>();
+
+    // The name of all restricted names not covered by the key or index filter
+    private final Set<CFDefinition.Name> restrictedNames = new HashSet<CFDefinition.Name>();
     private Restriction sliceRestriction;
 
     private boolean isReversed;
     private boolean onToken;
     private boolean isKeyRange;
     private boolean keyIsInRelation;
+    private boolean usesSecondaryIndexing;
 
     private static enum Bound
     {
@@ -127,18 +125,11 @@ public class SelectStatement implements CQLStatement
 
         cl.validateForRead(keyspace());
 
-        try
-        {
-            List<Row> rows = isKeyRange
-                           ? StorageProxy.getRangeSlice(getRangeCommand(variables), cl)
-                           : StorageProxy.read(getSliceCommands(variables), cl);
+        List<Row> rows = isKeyRange || usesSecondaryIndexing
+                       ? StorageProxy.getRangeSlice(getRangeCommand(variables), cl)
+                       : StorageProxy.read(getSliceCommands(variables), cl);
 
-            return processResults(rows, variables);
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
+        return processResults(rows, variables);
     }
 
     private ResultMessage.Rows processResults(List<Row> rows, List<ByteBuffer> variables) throws RequestValidationException
@@ -149,7 +140,7 @@ public class SelectStatement implements CQLStatement
         return new ResultMessage.Rows(rset);
     }
 
-    static List<Row> readLocally(String keyspace, List<ReadCommand> cmds) throws IOException
+    static List<Row> readLocally(String keyspace, List<ReadCommand> cmds)
     {
         Table table = Table.open(keyspace);
         List<Row> rows = new ArrayList(cmds.size());
@@ -162,15 +153,11 @@ public class SelectStatement implements CQLStatement
     {
         try
         {
-            List<Row> rows = isKeyRange
+            List<Row> rows = isKeyRange || usesSecondaryIndexing
                            ? RangeSliceVerbHandler.executeLocally(getRangeCommand(Collections.<ByteBuffer>emptyList()))
                            : readLocally(keyspace(), getSliceCommands(Collections.<ByteBuffer>emptyList()));
 
             return processResults(rows, Collections.<ByteBuffer>emptyList());
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
         }
         catch (ExecutionException e)
         {
@@ -389,7 +376,7 @@ public class SelectStatement implements CQLStatement
             return false;
 
         // However, collections always entails one
-        if (cfDef.hasCollections)
+        if (selectACollection())
             return true;
 
         // Otherwise, it is a range query if it has at least one the column alias
@@ -456,7 +443,7 @@ public class SelectStatement implements CQLStatement
         {
             // Collections require doing a slice query because a given collection is a
             // non-know set of columns, so we shouldn't get there
-            assert !cfDef.hasCollections;
+            assert !selectACollection();
 
             SortedSet<ByteBuffer> columns = new TreeSet<ByteBuffer>(cfDef.cfm.comparator);
 
@@ -486,6 +473,20 @@ public class SelectStatement implements CQLStatement
             }
             return columns;
         }
+    }
+
+    private boolean selectACollection()
+    {
+        if (!cfDef.hasCollections)
+            return false;
+
+        for (CFDefinition.Name name : selection.getColumnsList())
+        {
+            if (name.type instanceof CollectionType)
+                return true;
+        }
+
+        return false;
     }
 
     private static ByteBuffer buildBound(Bound bound,
@@ -553,14 +554,28 @@ public class SelectStatement implements CQLStatement
 
     private List<IndexExpression> getIndexExpressions(List<ByteBuffer> variables) throws InvalidRequestException
     {
-        if (metadataRestrictions.isEmpty())
+        if (!usesSecondaryIndexing || restrictedNames.isEmpty())
             return Collections.<IndexExpression>emptyList();
 
         List<IndexExpression> expressions = new ArrayList<IndexExpression>();
-        for (Map.Entry<CFDefinition.Name, Restriction> entry : metadataRestrictions.entrySet())
+        for (CFDefinition.Name name : restrictedNames)
         {
-            CFDefinition.Name name = entry.getKey();
-            Restriction restriction = entry.getValue();
+            Restriction restriction;
+            switch (name.kind)
+            {
+                case KEY_ALIAS:
+                    restriction = keyRestrictions[name.position];
+                    break;
+                case COLUMN_ALIAS:
+                    restriction = columnRestrictions[name.position];
+                    break;
+                case COLUMN_METADATA:
+                    restriction = metadataRestrictions.get(name);
+                    break;
+                default:
+                    // We don't allow restricting a VALUE_ALIAS for now in prepare.
+                    throw new AssertionError();
+            }
             if (restriction.isEquality())
             {
                 for (Term t : restriction.eqValues)
@@ -872,6 +887,22 @@ public class SelectStatement implements CQLStatement
         return true;
     }
 
+    private boolean hasIndexedColumnRestricted(List<ColumnDefinition> columns, Restriction[] restrictions)
+    {
+        assert columns.size() == restrictions.length;
+        for (int i = 0; i < columns.size(); ++i)
+        {
+            Restriction restriction = restrictions[i];
+            if (restriction == null)
+                continue;
+
+            ColumnDefinition def = columns.get(i);
+            if (def != null && def.isIndexed())
+                return true;
+        }
+        return false;
+    }
+
     public static class RawStatement extends CFStatement
     {
         private final Parameters parameters;
@@ -916,11 +947,20 @@ public class SelectStatement implements CQLStatement
              *     (we could allow two IN for the same entity but that doesn't seem very useful)
              *   - The value_alias cannot be restricted in any way (we don't support wide rows with indexed value in CQL so far)
              */
+            boolean hasQueriableIndex = false;
             for (Relation rel : whereClause)
             {
                 CFDefinition.Name name = cfDef.get(rel.getEntity());
                 if (name == null)
                     throw new InvalidRequestException(String.format("Undefined name %s in where clause ('%s')", rel.getEntity(), rel));
+
+                ColumnDefinition def = cfDef.cfm.getColumnDefinition(name.name.key);
+                stmt.restrictedNames.add(name);
+                if (def.isIndexed())
+                {
+                    if (rel.operator() == Relation.Type.EQ)
+                        hasQueriableIndex = true;
+                }
 
                 switch (name.kind)
                 {
@@ -942,47 +982,18 @@ public class SelectStatement implements CQLStatement
              * At this point, the select statement if fully constructed, but we still have a few things to validate
              */
 
-            // If a component of the PRIMARY KEY is restricted by a non-EQ relation, all preceding
-            // components must have a EQ, and all following must have no restriction
-            boolean shouldBeDone = false;
-            CFDefinition.Name previous = null;
-            Iterator<CFDefinition.Name> iter = cfDef.columns.values().iterator();
-            for (int i = 0; i < stmt.columnRestrictions.length; i++)
-            {
-                CFDefinition.Name cname = iter.next();
-                Restriction restriction = stmt.columnRestrictions[i];
-                if (restriction == null)
-                {
-                    shouldBeDone = true;
-                }
-                else if (shouldBeDone)
-                {
-                    throw new InvalidRequestException(String.format("PRIMARY KEY part %s cannot be restricted (preceding part %s is either not restricted or by a non-EQ relation)", cname, previous));
-                }
-                else if (!restriction.isEquality())
-                {
-                    shouldBeDone = true;
-                    // For non-composite slices, we don't support internally the difference between exclusive and
-                    // inclusive bounds, so we deal with it manually.
-                    if (!cfDef.isComposite && (!restriction.isInclusive(Bound.START) || !restriction.isInclusive(Bound.END)))
-                        stmt.sliceRestriction = restriction;
-                }
-                // We only support IN for the last name so far
-                // TODO: #3885 allows us to extend to other parts (cf. #4762)
-                else if (restriction.eqValues.size() > 1 && i != stmt.columnRestrictions.length - 1)
-                {
-                    throw new InvalidRequestException(String.format("PRIMARY KEY part %s cannot be restricted by IN relation", cname));
-                }
-
-                previous = cname;
-            }
+            // If there is a queriable index, no special condition are required on the other restrictions.
+            // But we still need to know 2 things:
+            //   - If we don't have a queriable index, is the query ok
+            //   - Is it queriable without 2ndary index, which is always more efficient
 
             // If a component of the partition key is restricted by a non-EQ relation, all preceding
             // components must have a EQ, and all following must have no restriction
-            shouldBeDone = false;
-            previous = null;
+            boolean shouldBeDone = false;
+            CFDefinition.Name previous = null;
             stmt.keyIsInRelation = false;
-            iter = cfDef.keys.values().iterator();
+            Iterator<CFDefinition.Name> iter = cfDef.keys.values().iterator();
+            int lastRestrictedPartitionKey = stmt.keyRestrictions.length - 1;
             for (int i = 0; i < stmt.keyRestrictions.length; i++)
             {
                 CFDefinition.Name cname = iter.next();
@@ -990,18 +1001,33 @@ public class SelectStatement implements CQLStatement
 
                 if (restriction == null)
                 {
+                    if (!shouldBeDone)
+                        lastRestrictedPartitionKey = i - 1;
+
                     if (stmt.onToken)
                         throw new InvalidRequestException("The token() function must be applied to all partition key components or none of them");
 
                     // Under a non order perserving partitioner, the only time not restricting a key part is allowed is if none are restricted
                     if (!partitioner.preservesOrder() && i > 0 && stmt.keyRestrictions[i-1] != null)
+                    {
+                        if (hasQueriableIndex)
+                        {
+                            stmt.usesSecondaryIndexing = true;
+                            break;
+                        }
                         throw new InvalidRequestException(String.format("Partition key part %s must be restricted since preceding part is", cname));
+                    }
 
                     stmt.isKeyRange = true;
                     shouldBeDone = true;
                 }
                 else if (shouldBeDone)
                 {
+                    if (hasQueriableIndex)
+                    {
+                        stmt.usesSecondaryIndexing = true;
+                        break;
+                    }
                     throw new InvalidRequestException(String.format("partition key part %s cannot be restricted (preceding part %s is either not restricted or by a non-EQ relation)", cname, previous));
                 }
                 else if (restriction.onToken)
@@ -1030,56 +1056,101 @@ public class SelectStatement implements CQLStatement
                 else
                 {
                     if (!partitioner.preservesOrder())
+                    {
+                        if (hasQueriableIndex)
+                        {
+                            stmt.usesSecondaryIndexing = true;
+                            break;
+                        }
                         throw new InvalidRequestException("Only EQ and IN relation are supported on the partition key for random partitioners (unless you use the token() function)");
+                    }
 
                     stmt.isKeyRange = true;
+                    lastRestrictedPartitionKey = i;
                     shouldBeDone = true;
                 }
                 previous = cname;
             }
 
-            // Deal with indexed columns
-            if (!stmt.metadataRestrictions.isEmpty())
+            // If a cluster key column is restricted by a non-EQ relation, all preceding
+            // columns must have a EQ, and all following must have no restriction. Unless
+            // the column is indexed that is.
+            shouldBeDone = false;
+            previous = null;
+            iter = cfDef.columns.values().iterator();
+            int lastRestrictedClusteringKey = stmt.columnRestrictions.length - 1;
+            for (int i = 0; i < stmt.columnRestrictions.length; i++)
             {
-                stmt.isKeyRange = true;
-                boolean hasEq = false;
-                SecondaryIndexManager idxManager = Table.open(keyspace()).getColumnFamilyStore(columnFamily()).indexManager;
-                Set<ByteBuffer> indexedNames = new HashSet<ByteBuffer>();
-                for (SecondaryIndex index : idxManager.getIndexes())
+                CFDefinition.Name cname = iter.next();
+                Restriction restriction = stmt.columnRestrictions[i];
+
+                if (restriction == null)
                 {
-                    for (ColumnDefinition cdef : index.getColumnDefs())
-                        indexedNames.add(cdef.name);
+                    if (!shouldBeDone)
+                        lastRestrictedClusteringKey = i - 1;
+                    shouldBeDone = true;
                 }
-
-                // Note: we cannot use idxManager.indexes() methods because we don't have a complete column name at this point, we only
-                // have the indexed component.
-                for (Map.Entry<CFDefinition.Name, Restriction> entry : stmt.metadataRestrictions.entrySet())
+                else
                 {
-                    Restriction restriction = entry.getValue();
-                    if (!restriction.isEquality())
-                        continue;
-
-                    // We don't support IN for indexed values (basically this would require supporting a form of OR)
-                    if (restriction.eqValues.size() > 1)
-                        throw new InvalidRequestException("Cannot use IN operator on column not part of the PRIMARY KEY");
-
-                    if (indexedNames.contains(entry.getKey().name.key))
+                    if (shouldBeDone)
                     {
-                        hasEq = true;
-                        break;
+                        if (hasQueriableIndex)
+                        {
+                            stmt.usesSecondaryIndexing = true;
+                            break;
+                        }
+                        throw new InvalidRequestException(String.format("PRIMARY KEY part %s cannot be restricted (preceding part %s is either not restricted or by a non-EQ relation)", cname, previous));
+                    }
+                    else if (!restriction.isEquality())
+                    {
+                        lastRestrictedClusteringKey = i;
+                        shouldBeDone = true;
+                        // For non-composite slices, we don't support internally the difference between exclusive and
+                        // inclusive bounds, so we deal with it manually.
+                        if (!cfDef.isComposite && (!restriction.isInclusive(Bound.START) || !restriction.isInclusive(Bound.END)))
+                            stmt.sliceRestriction = restriction;
+                    }
+                    // We only support IN for the last name and for compact storage so far
+                    // TODO: #3885 allows us to extend to non compact as well, but that remains to be done
+                    else if (restriction.eqValues.size() > 1)
+                    {
+                        if (i != stmt.columnRestrictions.length - 1)
+                            throw new InvalidRequestException(String.format("PRIMARY KEY part %s cannot be restricted by IN relation", cname));
+                        else if (stmt.selectACollection())
+                            throw new InvalidRequestException(String.format("Cannot restrict PRIMARY KEY part %s by IN relation as a collection is selected by the query", cname));
                     }
                 }
-                if (!hasEq)
+
+                previous = cname;
+            }
+
+            // Even if usesSecondaryIndexing is false at this point, we'll still have to use one if
+            // there is restrictions not covered by the PK.
+            if (!stmt.metadataRestrictions.isEmpty())
+            {
+                if (!hasQueriableIndex)
                     throw new InvalidRequestException("No indexed columns present in by-columns clause with Equal operator");
 
-                // If we have indexed columns and the key = X clause, we will do a range query, but if it's a IN relation, we don't know how to handle it.
+                stmt.usesSecondaryIndexing = true;
+            }
+
+            if (stmt.usesSecondaryIndexing)
+            {
                 if (stmt.keyIsInRelation)
                     throw new InvalidRequestException("Select on indexed columns and with IN clause for the PRIMARY KEY are not supported");
             }
 
+            iter = cfDef.keys.values().iterator();
+            for (int i = 0; i < lastRestrictedPartitionKey + 1; i++)
+                stmt.restrictedNames.remove(iter.next());
+
+            iter = cfDef.columns.values().iterator();
+            for (int i = 0; i < lastRestrictedClusteringKey + 1; i++)
+                stmt.restrictedNames.remove(iter.next());
+
             if (!stmt.parameters.orderings.isEmpty())
             {
-                if (!stmt.metadataRestrictions.isEmpty())
+                if (stmt.usesSecondaryIndexing)
                     throw new InvalidRequestException("ORDER BY with 2ndary indexes is not supported.");
 
                 if (stmt.isKeyRange)
@@ -1149,13 +1220,13 @@ public class SelectStatement implements CQLStatement
                 stmt.isReversed = isReversed;
             }
 
-            // Make sure this queries is allowed (note: only key range can involve filtering underneath)
-            if (!parameters.allowFiltering && stmt.isKeyRange)
+            // Make sure this queries is allowed (note: non key range non indexed cannot involve filtering underneath)
+            if (!parameters.allowFiltering && (stmt.isKeyRange || stmt.usesSecondaryIndexing))
             {
                 // We will potentially filter data if either:
                 //  - Have more than one IndexExpression
                 //  - Have no index expression and the column filter is not the identity
-                if (stmt.metadataRestrictions.size() > 1 || (stmt.metadataRestrictions.isEmpty() && !stmt.columnFilterIsIdentity()))
+                if (stmt.restrictedNames.size() > 1 || (stmt.restrictedNames.isEmpty() && !stmt.columnFilterIsIdentity()))
                     throw new InvalidRequestException("Cannot execute this query as it might involve data filtering and thus may have unpredictable performance. "
                                                     + "If you want to execute this query despite the performance unpredictability, use ALLOW FILTERING");
             }

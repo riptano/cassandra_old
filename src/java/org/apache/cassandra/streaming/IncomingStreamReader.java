@@ -38,8 +38,6 @@ import org.apache.cassandra.db.compaction.PrecompactedRow;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.metrics.StreamingMetrics;
-import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.net.OutboundTcpConnection;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.streaming.compress.CompressedInputStream;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -67,11 +65,7 @@ public class IncomingStreamReader
             if (!StreamInSession.hasSession(header.sessionId))
             {
                 StreamReply reply = new StreamReply("", header.sessionId, StreamReply.Status.SESSION_FAILURE);
-                OutboundTcpConnection.write(reply.createMessage(),
-                                            header.sessionId.toString(),
-                                            System.currentTimeMillis(),
-                                            new DataOutputStream(socket.getOutputStream()),
-                                            MessagingService.instance().getVersion(host));
+                FileStreamTask.sendReply(reply.createMessage(), new DataOutputStream(socket.getOutputStream()));
                 throw new IOException("Session " + header.sessionId + " already closed.");
             }
         }
@@ -116,10 +110,10 @@ public class IncomingStreamReader
             }
 
             assert remoteFile.estimatedKeys > 0;
-            DataInput dis = new DataInputStream(underliningStream);
+            DataInput in = new DataInputStream(underliningStream);
             try
             {
-                SSTableReader reader = streamIn(dis, localFile, remoteFile);
+                SSTableReader reader = streamIn(in, localFile, remoteFile);
                 session.finished(remoteFile, reader);
             }
             catch (IOException ex)
@@ -140,7 +134,7 @@ public class IncomingStreamReader
         ColumnFamilyStore cfs = Table.open(localFile.desc.ksname).getColumnFamilyStore(localFile.desc.cfname);
         DecoratedKey key;
         SSTableWriter writer = new SSTableWriter(localFile.getFilename(), remoteFile.estimatedKeys);
-        CompactionController controller = new CompactionController(cfs, Collections.<SSTableReader>emptyList(), Integer.MIN_VALUE);
+        CompactionController controller = new CompactionController(cfs, Collections.<SSTableReader>emptySet(), Integer.MIN_VALUE);
 
         try
         {

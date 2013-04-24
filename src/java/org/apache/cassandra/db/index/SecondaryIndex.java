@@ -37,7 +37,6 @@ import org.apache.cassandra.db.index.keys.KeysIndex;
 import org.apache.cassandra.db.index.composites.CompositesIndex;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BytesType;
-import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.LocalByPartionerType;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
@@ -54,6 +53,10 @@ public abstract class SecondaryIndex
     protected static final Logger logger = LoggerFactory.getLogger(SecondaryIndex.class);
 
     public static final String CUSTOM_INDEX_OPTION_NAME = "class_name";
+
+    public static final AbstractType<?> keyComparator = StorageService.getPartitioner().preservesOrder()
+                                                      ? BytesType.instance
+                                                      : new LocalByPartionerType(StorageService.getPartitioner());
 
     /**
      * Base CF that has many indexes
@@ -164,7 +167,7 @@ public abstract class SecondaryIndex
      *
      * @param truncatedAt The truncation timestamp, all data before that timestamp should be rejected.
      */
-    public abstract void truncate(long truncatedAt);
+    public abstract void truncateBlocking(long truncatedAt);
 
     /**
      * Builds the index using the data in the underlying CFS
@@ -231,19 +234,8 @@ public abstract class SecondaryIndex
         {
             public void run()
             {
-                try
-                {
-                    baseCfs.forceBlockingFlush();
-                    buildIndexBlocking();
-                }
-                catch (ExecutionException e)
-                {
-                    throw new RuntimeException(e);
-                }
-                catch (InterruptedException e)
-                {
-                    throw new AssertionError(e);
-                }
+                baseCfs.forceBlockingFlush();
+                buildIndexBlocking();
             }
         };
         FutureTask<?> f = new FutureTask<Object>(runnable, null);
@@ -330,7 +322,7 @@ public abstract class SecondaryIndex
             index = new KeysIndex();
             break;
         case COMPOSITES:
-            index = new CompositesIndex();
+            index = CompositesIndex.create(cdef);
             break;
         case CUSTOM:
             assert cdef.getIndexOptions() != null;
@@ -366,32 +358,12 @@ public abstract class SecondaryIndex
      */
     public static AbstractType<?> getIndexComparator(CFMetaData baseMetadata, ColumnDefinition cdef)
     {
-        IPartitioner rowPartitioner = StorageService.getPartitioner();
-        AbstractType<?> keyComparator = (rowPartitioner instanceof OrderPreservingPartitioner || rowPartitioner instanceof ByteOrderedPartitioner)
-                                      ? BytesType.instance
-                                      : new LocalByPartionerType(rowPartitioner);
-
         switch (cdef.getIndexType())
         {
             case KEYS:
                 return keyComparator;
             case COMPOSITES:
-                assert baseMetadata.comparator instanceof CompositeType;
-                int prefixSize;
-                try
-                {
-                    prefixSize = Integer.parseInt(cdef.getIndexOptions().get(CompositesIndex.PREFIX_SIZE_OPTION));
-                }
-                catch (NumberFormatException e)
-                {
-                    // This shouldn't happen if validation has been done correctly
-                    throw new RuntimeException(e);
-                }
-                List<AbstractType<?>> types = new ArrayList<AbstractType<?>>(prefixSize + 1);
-                types.add(keyComparator);
-                for (int i = 0; i < prefixSize; i++)
-                    types.add(((CompositeType)baseMetadata.comparator).types.get(i));
-                return CompositeType.getInstance(types);
+                return CompositesIndex.getIndexComparator(baseMetadata, cdef);
             case CUSTOM:
                 return null;
         }

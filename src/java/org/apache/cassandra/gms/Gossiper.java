@@ -33,6 +33,8 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.concurrent.DebuggableScheduledThreadPoolExecutor;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.net.IAsyncCallback;
+import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.StorageService;
@@ -277,6 +279,13 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         // do subscribers first so anything in the subscriber that depends on gossiper state won't get confused
         for (IEndpointStateChangeSubscriber subscriber : subscribers)
             subscriber.onRemove(endpoint);
+
+        if(seeds.contains(endpoint))
+        {
+            buildSeedsList();
+            seeds.remove(endpoint);
+            logger.info("removed {} from seeds, updated seeds list = {}", endpoint, seeds);
+        }
 
         liveEndpoints.remove(endpoint);
         unreachableEndpoints.remove(endpoint);
@@ -556,6 +565,16 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
     }
 
+    public boolean isFatClient(InetAddress endpoint)
+    {
+        EndpointState epState = endpointStateMap.get(endpoint);
+        if (epState == null)
+        {
+            return false;
+        }
+        return !isDeadState(epState) && !epState.isAlive() && !StorageService.instance.getTokenMetadata().isMember(endpoint);
+    }
+
     private void doStatusCheck()
     {
         long now = System.currentTimeMillis();
@@ -574,7 +593,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
                 // check if this is a fat client. fat clients are removed automatically from
                 // gossip after FatClientTimeout.  Do not remove dead states here.
-                if (!isDeadState(epState) && !epState.isAlive() && !StorageService.instance.getTokenMetadata().isMember(endpoint) && !justRemovedEndpoints.containsKey(endpoint) && (duration > FatClientTimeout))
+                if (isFatClient(endpoint) && !justRemovedEndpoints.containsKey(endpoint) && (duration > FatClientTimeout))
                 {
                     logger.info("FatClient " + endpoint + " has been silent for " + FatClientTimeout + "ms, removing from gossip");
                     removeEndpoint(endpoint); // will put it in justRemovedEndpoints to respect quarantine delay
@@ -749,31 +768,45 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     }
 
-    private void markAlive(InetAddress addr, EndpointState localState)
+    private void markAlive(final InetAddress addr, final EndpointState localState)
     {
-        if (logger.isTraceEnabled())
-            logger.trace("marking as alive {}", addr);
-        localState.markAlive();
-        localState.updateTimestamp(); // prevents doStatusCheck from racing us and evicting if it was down > aVeryLongTime
-        liveEndpoints.add(addr);
-        unreachableEndpoints.remove(addr);
-        expireTimeEndpointMap.remove(addr);
-        logger.debug("removing expire time for endpoint : " + addr);
-        logger.info("InetAddress {} is now UP", addr);
-        for (IEndpointStateChangeSubscriber subscriber : subscribers)
-            subscriber.onAlive(addr, localState);
-        if (logger.isTraceEnabled())
-            logger.trace("Notified " + subscribers);
+        MessageOut<EchoMessage> echoMessage = new MessageOut<EchoMessage>(MessagingService.Verb.ECHO, new EchoMessage(), EchoMessage.serializer);
+        logger.trace("Sending a EchoMessage to {}", addr);
+        IAsyncCallback echoHandler = new IAsyncCallback()
+        {
+            public boolean isLatencyForSnitch()
+            {
+                return false;
+            }
+
+            public void response(MessageIn msg)
+            {
+                if (logger.isTraceEnabled())
+                    logger.trace("marking as alive {}", addr);
+                localState.markAlive();
+                localState.updateTimestamp(); // prevents doStatusCheck from racing us and evicting if it was down > aVeryLongTime
+                liveEndpoints.add(addr);
+                unreachableEndpoints.remove(addr);
+                expireTimeEndpointMap.remove(addr);
+                logger.debug("removing expire time for endpoint : " + addr);
+                logger.info("InetAddress {} is now UP", addr);
+                for (IEndpointStateChangeSubscriber subscriber : subscribers)
+                    subscriber.onAlive(addr, localState);
+                if (logger.isTraceEnabled())
+                    logger.trace("Notified " + subscribers);
+            }
+        };
+        MessagingService.instance().sendRR(echoMessage, addr, echoHandler);
     }
 
     private void markDead(InetAddress addr, EndpointState localState)
     {
         if (logger.isTraceEnabled())
-            logger.trace("marking as dead {}", addr);
+            logger.trace("marking as down {}", addr);
         localState.markDead();
         liveEndpoints.remove(addr);
         unreachableEndpoints.put(addr, System.currentTimeMillis());
-        logger.info("InetAddress {} is now dead.", addr);
+        logger.info("InetAddress {} is now DOWN", addr);
         for (IEndpointStateChangeSubscriber subscriber : subscribers)
             subscriber.onDead(addr, localState);
         if (logger.isTraceEnabled())
@@ -1017,15 +1050,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      */
     public void start(int generationNbr, Map<ApplicationState, VersionedValue> preloadLocalStates)
     {
-        /* Get the seeds from the config and initialize them. */
-        Set<InetAddress> seedHosts = DatabaseDescriptor.getSeeds();
-        for (InetAddress seed : seedHosts)
-        {
-            if (seed.equals(FBUtilities.getBroadcastAddress()))
-                continue;
-            seeds.add(seed);
-        }
-
+        buildSeedsList();
         /* initialize the heartbeat state for this localEndpoint */
         maybeInitializeLocalState(generationNbr);
         EndpointState localState = endpointStateMap.get(FBUtilities.getBroadcastAddress());
@@ -1041,6 +1066,16 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                                                               Gossiper.intervalInMillis,
                                                               Gossiper.intervalInMillis,
                                                               TimeUnit.MILLISECONDS);
+    }
+
+    private void buildSeedsList()
+    {
+        for (InetAddress seed : DatabaseDescriptor.getSeeds())
+        {
+            if (seed.equals(FBUtilities.getBroadcastAddress()))
+                continue;
+            seeds.add(seed);
+        }
     }
 
     // initialize local HB state if needed, i.e., if gossiper has never been started before.
@@ -1085,7 +1120,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         logger.info("Announcing shutdown");
         try
         {
-            Thread.sleep(intervalInMillis);
+            Thread.sleep(intervalInMillis * 2);
         }
         catch (InterruptedException e)
         {

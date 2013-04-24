@@ -29,7 +29,6 @@ import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.transport.*;
-import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.UUIDGen;
 
 /**
@@ -39,7 +38,7 @@ public class QueryMessage extends Message.Request
 {
     public static final Message.Codec<QueryMessage> codec = new Message.Codec<QueryMessage>()
     {
-        public QueryMessage decode(ChannelBuffer body)
+        public QueryMessage decode(ChannelBuffer body, int version)
         {
             String query = CBUtil.readLongString(body);
             ConsistencyLevel consistency = CBUtil.readConsistencyLevel(body);

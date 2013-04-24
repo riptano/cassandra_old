@@ -15,25 +15,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.utils.obs;
+package org.apache.cassandra.utils;
 
-/**
- * Methods for manipulating arrays.
- *
- * @lucene.internal
- */
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.util.UUID;
 
-final class ArrayUtil {
-  public static long[] grow(long[] array, int minSize) {
-    if (array.length < minSize) {
-      long[] newArray = new long[Math.max(array.length << 1, minSize)];
-      System.arraycopy(array, 0, newArray, 0, array.length);
-      return newArray;
-    } else
-      return array;
-  }
+import org.apache.cassandra.db.TypeSizes;
+import org.apache.cassandra.io.IVersionedSerializer;
 
-  public static long[] grow(long[] array) {
-    return grow(array, 1 + array.length);
-  }
+public class BooleanSerializer implements IVersionedSerializer<Boolean>
+{
+    public static BooleanSerializer serializer = new BooleanSerializer();
+
+    public void serialize(Boolean b, DataOutput out, int version) throws IOException
+    {
+        out.writeBoolean(b);
+    }
+
+    public Boolean deserialize(DataInput in, int version) throws IOException
+    {
+        return in.readBoolean();
+    }
+
+    public long serializedSize(Boolean aBoolean, int version)
+    {
+        return 1;
+    }
 }

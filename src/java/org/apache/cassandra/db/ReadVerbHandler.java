@@ -17,8 +17,6 @@
  */
 package org.apache.cassandra.db;
 
-import java.io.IOException;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,29 +32,22 @@ public class ReadVerbHandler implements IVerbHandler<ReadCommand>
 {
     private static final Logger logger = LoggerFactory.getLogger( ReadVerbHandler.class );
 
-    public void doVerb(MessageIn<ReadCommand> message, String id)
+    public void doVerb(MessageIn<ReadCommand> message, int id)
     {
         if (StorageService.instance.isBootstrapMode())
         {
             throw new RuntimeException("Cannot service reads while bootstrapping!");
         }
 
-        try
-        {
-            ReadCommand command = message.payload;
-            Table table = Table.open(command.table);
-            Row row = command.getRow(table);
+        ReadCommand command = message.payload;
+        Table table = Table.open(command.table);
+        Row row = command.getRow(table);
 
-            MessageOut<ReadResponse> reply = new MessageOut<ReadResponse>(MessagingService.Verb.REQUEST_RESPONSE,
-                                                                          getResponse(command, row),
-                                                                          ReadResponse.serializer);
-            Tracing.trace("Enqueuing response to {}", message.from);
-            MessagingService.instance().sendReply(reply, id, message.from);
-        }
-        catch (IOException ex)
-        {
-            throw new RuntimeException(ex);
-        }
+        MessageOut<ReadResponse> reply = new MessageOut<ReadResponse>(MessagingService.Verb.REQUEST_RESPONSE,
+                                                                      getResponse(command, row),
+                                                                      ReadResponse.serializer);
+        Tracing.trace("Enqueuing response to {}", message.from);
+        MessagingService.instance().sendReply(reply, id, message.from);
     }
 
     public static ReadResponse getResponse(ReadCommand command, Row row)

@@ -74,22 +74,13 @@ public class AlterTableStatement
         switch (oType)
         {
             case ADD:
-                if (!cfm.getKeyAliases().isEmpty() && cfm.getKeyAliases().contains(columnName))
-                    throw new InvalidRequestException("Invalid column name: "
-                                                      + this.columnName
-                                                      + ", because it equals to a key alias.");
-
-                cfm.addColumnDefinition(new ColumnDefinition(columnName,
-                                                             TypeParser.parse(validator),
-                                                             null,
-                                                             null,
-                                                             null,
-                                                             null));
+                cfm.addColumnDefinition(ColumnDefinition.regularDef(columnName, TypeParser.parse(validator), null));
                 break;
 
             case ALTER:
                 // We only look for the first key alias which is ok for CQL2
-                if (!cfm.getKeyAliases().isEmpty() && cfm.getKeyAliases().get(0).equals(columnName))
+                ColumnDefinition partionKeyDef = cfm.partitionKeyColumns().get(0);
+                if (partionKeyDef != null && partionKeyDef.name.equals(columnName))
                 {
                     cfm.keyValidator(TypeParser.parse(validator));
                 }
@@ -97,7 +88,7 @@ public class AlterTableStatement
                 {
                     ColumnDefinition toUpdate = null;
 
-                    for (ColumnDefinition columnDef : cfm.getColumn_metadata().values())
+                    for (ColumnDefinition columnDef : cfm.regularColumns())
                     {
                         if (columnDef.name.equals(columnName))
                         {
@@ -118,7 +109,7 @@ public class AlterTableStatement
             case DROP:
                 ColumnDefinition toDelete = null;
 
-                for (ColumnDefinition columnDef : cfm.getColumn_metadata().values())
+                for (ColumnDefinition columnDef : cfm.regularColumns())
                 {
                     if (columnDef.name.equals(columnName))
                     {
@@ -183,8 +174,12 @@ public class AlterTableStatement
         cfm.dcLocalReadRepairChance(cfProps.getPropertyDouble(CFPropDefs.KW_DCLOCALREADREPAIRCHANCE, cfm.getDcLocalReadRepair()));
         cfm.gcGraceSeconds(cfProps.getPropertyInt(CFPropDefs.KW_GCGRACESECONDS, cfm.getGcGraceSeconds()));
         cfm.replicateOnWrite(cfProps.getPropertyBoolean(CFPropDefs.KW_REPLICATEONWRITE, cfm.getReplicateOnWrite()));
-        cfm.minCompactionThreshold(cfProps.getPropertyInt(CFPropDefs.KW_MINCOMPACTIONTHRESHOLD, cfm.getMinCompactionThreshold()));
-        cfm.maxCompactionThreshold(cfProps.getPropertyInt(CFPropDefs.KW_MAXCOMPACTIONTHRESHOLD, cfm.getMaxCompactionThreshold()));
+        int minCompactionThreshold = cfProps.getPropertyInt(CFPropDefs.KW_MINCOMPACTIONTHRESHOLD, cfm.getMinCompactionThreshold());
+        int maxCompactionThreshold = cfProps.getPropertyInt(CFPropDefs.KW_MAXCOMPACTIONTHRESHOLD, cfm.getMaxCompactionThreshold());
+        if (minCompactionThreshold <= 0 || maxCompactionThreshold <= 0)
+            throw new ConfigurationException("Disabling compaction by setting compaction thresholds to 0 has been deprecated, set the compaction option 'enabled' to false instead.");
+        cfm.minCompactionThreshold(minCompactionThreshold);
+        cfm.maxCompactionThreshold(maxCompactionThreshold);
         cfm.caching(CFMetaData.Caching.fromString(cfProps.getPropertyString(CFPropDefs.KW_CACHING, cfm.getCaching().toString())));
         cfm.defaultTimeToLive(cfProps.getPropertyInt(CFPropDefs.KW_DEFAULT_TIME_TO_LIVE, cfm.getDefaultTimeToLive()));
         cfm.speculativeRetry(CFMetaData.SpeculativeRetry.fromString(cfProps.getPropertyString(CFPropDefs.KW_SPECULATIVE_RETRY, cfm.getSpeculativeRetry().toString())));

@@ -20,15 +20,17 @@ package org.apache.cassandra.streaming;
 */
 
 import static junit.framework.Assert.assertEquals;
+import org.apache.cassandra.OrderedJUnit4ClassRunner;
 import org.apache.cassandra.Util;
 import static org.apache.cassandra.Util.column;
-import static org.apache.cassandra.Util.addMutation;
 
 import java.net.InetAddress;
 import java.sql.Date;
+import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.cassandra.SchemaLoader;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.context.CounterContext;
@@ -47,11 +49,13 @@ import org.apache.cassandra.utils.FBUtilities;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.utils.ByteBufferUtil;
 
+@RunWith(OrderedJUnit4ClassRunner.class)
 public class StreamingTransferTest extends SchemaLoader
 {
     private static final Logger logger = LoggerFactory.getLogger(StreamingTransferTest.class);
@@ -128,6 +132,40 @@ public class StreamingTransferTest extends SchemaLoader
         session.await();
     }
 
+    /**
+     * Test to make sure RangeTombstones at column index boundary transferred correctly.
+     */
+    @Test
+    public void testTransferRangeTombstones() throws Exception
+    {
+        String ks = "Keyspace1";
+        String cfname = "StandardInteger1";
+        Table table = Table.open(ks);
+        ColumnFamilyStore cfs = table.getColumnFamilyStore(cfname);
+
+        String key = "key1";
+        RowMutation rm = new RowMutation(ks, ByteBufferUtil.bytes(key));
+        // add columns of size slightly less than column_index_size to force insert column index
+        rm.add(cfname, ByteBufferUtil.bytes(1), ByteBuffer.wrap(new byte[DatabaseDescriptor.getColumnIndexSize() - 64]), 2);
+        rm.add(cfname, ByteBufferUtil.bytes(6), ByteBuffer.wrap(new byte[DatabaseDescriptor.getColumnIndexSize()]), 2);
+        ColumnFamily cf = rm.addOrGet(cfname);
+        // add RangeTombstones
+        cf.delete(new DeletionInfo(ByteBufferUtil.bytes(2), ByteBufferUtil.bytes(3), cf.getComparator(), 1, (int) (System.currentTimeMillis() / 1000)));
+        cf.delete(new DeletionInfo(ByteBufferUtil.bytes(5), ByteBufferUtil.bytes(7), cf.getComparator(), 1, (int) (System.currentTimeMillis() / 1000)));
+        rm.apply();
+        cfs.forceBlockingFlush();
+
+        SSTableReader sstable = cfs.getSSTables().iterator().next();
+        cfs.clearUnsafe();
+        transfer(table, sstable);
+
+        // confirm that a single SSTable was transferred and registered
+        assertEquals(1, cfs.getSSTables().size());
+
+        List<Row> rows = Util.getRangeSlice(cfs);
+        assertEquals(1, rows.size());
+    }
+
     @Test
     public void testTransferTable() throws Exception
     {
@@ -139,7 +177,7 @@ public class StreamingTransferTest extends SchemaLoader
             public void mutate(String key, String col, long timestamp) throws Exception
             {
                 long val = key.hashCode();
-                ColumnFamily cf = ColumnFamily.create(table.getName(), cfs.name);
+                ColumnFamily cf = TreeMapBackedSortedColumns.factory.create(table.getName(), cfs.name);
                 cf.addColumn(column(col, "v", timestamp));
                 cf.addColumn(new Column(ByteBufferUtil.bytes("birthdate"), ByteBufferUtil.bytes(val), timestamp));
                 RowMutation rm = new RowMutation("Keyspace1", ByteBufferUtil.bytes(key), cf);
@@ -180,8 +218,8 @@ public class StreamingTransferTest extends SchemaLoader
             public void mutate(String key, String col, long timestamp) throws Exception
             {
                 Map<String, ColumnFamily> entries = new HashMap<String, ColumnFamily>();
-                ColumnFamily cf = ColumnFamily.create(cfs.metadata);
-                ColumnFamily cfCleaned = ColumnFamily.create(cfs.metadata);
+                ColumnFamily cf = TreeMapBackedSortedColumns.factory.create(cfs.metadata);
+                ColumnFamily cfCleaned = TreeMapBackedSortedColumns.factory.create(cfs.metadata);
                 CounterContext.ContextState state = CounterContext.ContextState.allocate(4, 1);
                 state.writeElement(CounterId.fromInt(2), 9L, 3L, true);
                 state.writeElement(CounterId.fromInt(4), 4L, 2L);
@@ -327,7 +365,7 @@ public class StreamingTransferTest extends SchemaLoader
         {
             public void mutate(String key, String colName, long timestamp) throws Exception
             {
-                ColumnFamily cf = ColumnFamily.create(table.getName(), cfs.name);
+                ColumnFamily cf = TreeMapBackedSortedColumns.factory.create(table.getName(), cfs.name);
                 cf.addColumn(column(colName, "value", timestamp));
                 cf.addColumn(new Column(ByteBufferUtil.bytes("birthdate"), ByteBufferUtil.bytes(new Date(timestamp).toString()), timestamp));
                 RowMutation rm = new RowMutation("Keyspace1", ByteBufferUtil.bytes(key), cf);

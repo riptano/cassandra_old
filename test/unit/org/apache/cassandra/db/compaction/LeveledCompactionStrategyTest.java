@@ -18,12 +18,16 @@
 package org.apache.cassandra.db.compaction;
 
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
 
-import com.google.common.collect.Iterables;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
+import org.apache.cassandra.OrderedJUnit4ClassRunner;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -35,16 +39,19 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.SSTable;
 import org.apache.cassandra.io.sstable.SSTableReader;
-import org.apache.cassandra.service.AntiEntropyService;
+import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
+
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+@RunWith(OrderedJUnit4ClassRunner.class)
 public class LeveledCompactionStrategyTest extends SchemaLoader
 {
     /*
-     * This excercise in particular the code of #4142
+     * This exercises in particular the code of #4142
      */
     @Test
     public void testValidationMultipleSSTablePerLevel() throws Exception
@@ -52,7 +59,7 @@ public class LeveledCompactionStrategyTest extends SchemaLoader
         String ksname = "Keyspace1";
         String cfname = "StandardLeveled";
         Table table = Table.open(ksname);
-        ColumnFamilyStore store = table.getColumnFamilyStore(cfname);
+        ColumnFamilyStore cfs = table.getColumnFamilyStore(cfname);
 
         ByteBuffer value = ByteBuffer.wrap(new byte[100 * 1024]); // 100 KB value, make it easy to have multiple files
 
@@ -70,25 +77,32 @@ public class LeveledCompactionStrategyTest extends SchemaLoader
                 rm.add(cfname, ByteBufferUtil.bytes("column" + c), value, 0);
             }
             rm.apply();
-            store.forceBlockingFlush();
+            cfs.forceBlockingFlush();
         }
 
-        LeveledCompactionStrategy strat = (LeveledCompactionStrategy)store.getCompactionStrategy();
-
-        while (strat.getLevelSize(0) > 1)
-        {
-            store.forceMajorCompaction();
-            Thread.sleep(200);
-        }
+        waitForLeveling(cfs);
+        LeveledCompactionStrategy strategy = (LeveledCompactionStrategy) cfs.getCompactionStrategy();
         // Checking we're not completely bad at math
-        assert strat.getLevelSize(1) > 0;
-        assert strat.getLevelSize(2) > 0;
+        assert strategy.getLevelSize(1) > 0;
+        assert strategy.getLevelSize(2) > 0;
 
-        AntiEntropyService.CFPair p = new AntiEntropyService.CFPair(ksname, cfname);
+        ActiveRepairService.CFPair p = new ActiveRepairService.CFPair(ksname, cfname);
         Range<Token> range = new Range<Token>(Util.token(""), Util.token(""));
-        AntiEntropyService.TreeRequest req = new AntiEntropyService.TreeRequest("1", FBUtilities.getLocalAddress(), range, p);
-        AntiEntropyService.Validator validator = new AntiEntropyService.Validator(req);
-        CompactionManager.instance.submitValidation(store, validator).get();
+        int gcBefore = (int)(System.currentTimeMillis()/1000) - table.getColumnFamilyStore(cfname).metadata.getGcGraceSeconds();
+        ActiveRepairService.TreeRequest req = new ActiveRepairService.TreeRequest("1", FBUtilities.getLocalAddress(), range, gcBefore, p);
+        ActiveRepairService.Validator validator = new ActiveRepairService.Validator(req);
+        CompactionManager.instance.submitValidation(cfs, validator).get();
+    }
+
+    /**
+     * wait for leveled compaction to quiesce on the given columnfamily
+     */
+    private void waitForLeveling(ColumnFamilyStore cfs) throws InterruptedException, ExecutionException
+    {
+        LeveledCompactionStrategy strategy = (LeveledCompactionStrategy) cfs.getCompactionStrategy();
+        // L0 is the lowest priority, so when that's done, we know everything is done
+        while (strategy.getLevelSize(0) > 1)
+            Thread.sleep(100);
     }
 
     @Test
@@ -97,7 +111,7 @@ public class LeveledCompactionStrategyTest extends SchemaLoader
         String ksname = "Keyspace1";
         String cfname = "StandardLeveled";
         Table table = Table.open(ksname);
-        ColumnFamilyStore store = table.getColumnFamilyStore(cfname);
+        ColumnFamilyStore cfs = table.getColumnFamilyStore(cfname);
 
         // make sure we have SSTables in L1
         ByteBuffer value = ByteBuffer.wrap(new byte[100 * 1024]);
@@ -112,16 +126,18 @@ public class LeveledCompactionStrategyTest extends SchemaLoader
                 rm.add(cfname, ByteBufferUtil.bytes("column" + c), value, 0);
             }
             rm.apply();
-            store.forceBlockingFlush();
+            cfs.forceBlockingFlush();
         }
-        store.forceMajorCompaction();
 
-        LeveledCompactionStrategy strat = (LeveledCompactionStrategy)store.getCompactionStrategy();
-        assert strat.getLevelSize(1) > 0;
+        waitForLeveling(cfs);
+        LeveledCompactionStrategy strategy = (LeveledCompactionStrategy) cfs.getCompactionStrategy();
+        assert strategy.getLevelSize(1) > 0;
 
         // get LeveledScanner for level 1 sstables
-        Collection<SSTableReader> sstables = strat.manifest.getLevel(1);
-        ICompactionScanner scanner = strat.getScanners(sstables).get(0);
+        Collection<SSTableReader> sstables = strategy.manifest.getLevel(1);
+        List<ICompactionScanner> scanners = strategy.getScanners(sstables);
+        assertEquals(1, scanners.size()); // should be one per level
+        ICompactionScanner scanner = scanners.get(0);
         // scan through to the end
         while (scanner.hasNext())
             scanner.next();
@@ -129,13 +145,14 @@ public class LeveledCompactionStrategyTest extends SchemaLoader
         // scanner.getCurrentPosition should be equal to total bytes of L1 sstables
         assert scanner.getCurrentPosition() == SSTable.getTotalBytes(sstables);
     }
+
     @Test
     public void testMutateLevel() throws Exception
     {
         String ksname = "Keyspace1";
         String cfname = "StandardLeveled";
         Table table = Table.open(ksname);
-        ColumnFamilyStore store = table.getColumnFamilyStore(cfname);
+        ColumnFamilyStore cfs = table.getColumnFamilyStore(cfname);
 
         ByteBuffer value = ByteBuffer.wrap(new byte[100 * 1024]); // 100 KB value, make it easy to have multiple files
 
@@ -153,42 +170,34 @@ public class LeveledCompactionStrategyTest extends SchemaLoader
                 rm.add(cfname, ByteBufferUtil.bytes("column" + c), value, 0);
             }
             rm.apply();
-            store.forceBlockingFlush();
+            cfs.forceBlockingFlush();
         }
 
-        LeveledCompactionStrategy strat = (LeveledCompactionStrategy)store.getCompactionStrategy();
+        waitForLeveling(cfs);
+        LeveledCompactionStrategy strategy = (LeveledCompactionStrategy) cfs.getCompactionStrategy();
 
-        while (strat.getLevelSize(0) > 1)
-        {
-            store.forceMajorCompaction();
-            Thread.sleep(200);
-        }
-
-        for(SSTableReader s : table.getColumnFamilyStore(cfname).getSSTables())
+        Set<SSTableReader> changedSSTables = new HashSet<SSTableReader>();
+        Collection<SSTableReader> sstables = cfs.getDataTracker().getUncompactingSSTables();
+        assert cfs.getDataTracker().markCompacting(sstables); // dont touch my sstables!
+        // change sstable level on all current sstables
+        for (SSTableReader s : sstables)
         {
             assertTrue(s.getSSTableLevel() != 6);
-            strat.manifest.remove(s);
+            strategy.manifest.remove(s);
             LeveledManifest.mutateLevel(s.getSSTableMetadata(), s.descriptor, s.descriptor.filenameFor(Component.STATS), 6);
             s.reloadSSTableMetadata();
-            strat.manifest.add(s);
+            changedSSTables.add(s);
+            strategy.manifest.add(s);
         }
-
-        for(SSTableReader s : table.getColumnFamilyStore(cfname).getSSTables())
+        // verify that all sstables in the changed set is level 6
+        for (SSTableReader s : table.getColumnFamilyStore(cfname).getSSTables())
         {
-            assertTrue(s.getSSTableLevel() == 6);
+            if (changedSSTables.contains(s))
+                assertTrue(s.getSSTableLevel() == 6);
         }
 
-        int [] levels = strat.manifest.getAllLevelSize();
-
-        for (int i =0; i < levels.length; i++)
-        {
-            if (i!=6)
-                assertTrue(levels[i] == 0);
-            else
-                assertTrue(levels[i] == table.getColumnFamilyStore(cfname).getSSTables().size());
-        }
-
+        int[] levels = strategy.manifest.getAllLevelSize();
+        // verify that the manifest has correct amount of sstables
+        assertEquals(changedSSTables.size(), levels[6]);
     }
-
-
 }

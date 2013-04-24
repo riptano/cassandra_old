@@ -21,7 +21,6 @@ import java.net.InetAddress;
 import java.util.Collection;
 import java.util.concurrent.TimeUnit;
 
-import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -29,21 +28,12 @@ import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.Table;
 import org.apache.cassandra.db.WriteType;
 import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.gms.FailureDetector;
 import org.apache.cassandra.net.IAsyncCallback;
 import org.apache.cassandra.net.MessageIn;
 import org.apache.cassandra.utils.SimpleCondition;
 
 public abstract class AbstractWriteResponseHandler implements IAsyncCallback
 {
-    private static Predicate<InetAddress> isAlive = new Predicate<InetAddress>()
-    {
-        public boolean apply(InetAddress endpoint)
-        {
-            return FailureDetector.instance.isAlive(endpoint);
-        }
-    };
-
     private final SimpleCondition condition = new SimpleCondition();
     protected final Table table;
     protected final long startTime;
@@ -88,7 +78,14 @@ public abstract class AbstractWriteResponseHandler implements IAsyncCallback
         }
 
         if (!success)
-            throw new WriteTimeoutException(writeType, consistencyLevel, ackCount(), consistencyLevel.blockFor(table) + pendingEndpoints.size());
+            throw new WriteTimeoutException(writeType, consistencyLevel, ackCount(), totalBlockFor());
+    }
+
+    protected int totalBlockFor()
+    {
+        // During bootstrap, we have to include the pending endpoints or we may fail the consistency level
+        // guarantees (see #833)
+        return consistencyLevel.blockFor(table) + pendingEndpoints.size();
     }
 
     protected abstract int ackCount();

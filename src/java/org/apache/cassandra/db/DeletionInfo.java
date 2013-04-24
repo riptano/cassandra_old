@@ -28,8 +28,8 @@ import com.google.common.base.Objects;
 import com.google.common.collect.Iterables;
 
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.ISSTableSerializer;
+import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.net.MessagingService;
@@ -276,14 +276,14 @@ public class DeletionInfo
     {
         private final static ISerializer<ByteBuffer> bbSerializer = new ISerializer<ByteBuffer>()
         {
-            public void serialize(ByteBuffer bb, DataOutput dos) throws IOException
+            public void serialize(ByteBuffer bb, DataOutput out) throws IOException
             {
-                ByteBufferUtil.writeWithShortLength(bb, dos);
+                ByteBufferUtil.writeWithShortLength(bb, out);
             }
 
-            public ByteBuffer deserialize(DataInput dis) throws IOException
+            public ByteBuffer deserialize(DataInput in) throws IOException
             {
-                return ByteBufferUtil.readWithShortLength(dis);
+                return ByteBufferUtil.readWithShortLength(in);
             }
 
             public long serializedSize(ByteBuffer bb, TypeSizes typeSizes)

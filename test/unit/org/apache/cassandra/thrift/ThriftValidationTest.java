@@ -22,8 +22,6 @@ package org.apache.cassandra.thrift;
 
 import org.junit.Test;
 
-import java.util.Collections;
-
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.marshal.AsciiType;
@@ -56,11 +54,10 @@ public class ThriftValidationTest extends SchemaLoader
         boolean gotException = false;
 
         // add a key_alias = "id"
-        newMetadata.keyAliases(Collections.singletonList(AsciiType.instance.decompose("id")));
-
         // should not throw IRE here
         try
         {
+            newMetadata.addColumnDefinition(ColumnDefinition.partitionKeyDef(AsciiType.instance.decompose("id"), UTF8Type.instance, null));
             newMetadata.validate();
         }
         catch (ConfigurationException e)
@@ -70,13 +67,13 @@ public class ThriftValidationTest extends SchemaLoader
 
         assert !gotException : "got unexpected ConfigurationException";
 
-        // add a column with name = "id"
-        newMetadata.addColumnDefinition(new ColumnDefinition(ByteBufferUtil.bytes("id"), UTF8Type.instance, null, null, null, null));
 
         gotException = false;
 
+        // add a column with name = "id"
         try
         {
+            newMetadata.addColumnDefinition(ColumnDefinition.regularDef(ByteBufferUtil.bytes("id"), UTF8Type.instance, null));
             newMetadata.validate();
         }
         catch (ConfigurationException e)

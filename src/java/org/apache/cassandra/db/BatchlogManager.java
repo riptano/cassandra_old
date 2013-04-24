@@ -134,9 +134,9 @@ public class BatchlogManager implements BatchlogManagerMBean
         ByteBuffer writtenAt = LongType.instance.decompose(timestamp / 1000);
         ByteBuffer data = serializeRowMutations(mutations);
 
-        ColumnFamily cf = ColumnFamily.create(CFMetaData.BatchlogCF);
-        cf.addColumn(new Column(WRITTEN_AT, writtenAt, timestamp));
+        ColumnFamily cf = ArrayBackedSortedColumns.factory.create(CFMetaData.BatchlogCf);
         cf.addColumn(new Column(DATA, data, timestamp));
+        cf.addColumn(new Column(WRITTEN_AT, writtenAt, timestamp));
 
         return new RowMutation(Table.SYSTEM_KS, UUIDType.instance.decompose(uuid), cf);
     }
@@ -144,13 +144,13 @@ public class BatchlogManager implements BatchlogManagerMBean
     private static ByteBuffer serializeRowMutations(Collection<RowMutation> mutations)
     {
         FastByteArrayOutputStream bos = new FastByteArrayOutputStream();
-        DataOutputStream dos = new DataOutputStream(bos);
+        DataOutputStream out = new DataOutputStream(bos);
 
         try
         {
-            dos.writeInt(mutations.size());
+            out.writeInt(mutations.size());
             for (RowMutation rm : mutations)
-                RowMutation.serializer.serialize(rm, dos, VERSION);
+                RowMutation.serializer.serialize(rm, out, VERSION);
         }
         catch (IOException e)
         {
@@ -250,7 +250,7 @@ public class BatchlogManager implements BatchlogManagerMBean
     private static ByteBuffer columnName(String name)
     {
         ByteBuffer raw = UTF8Type.instance.decompose(name);
-        return CFMetaData.BatchlogCF.getCfDef().getColumnNameBuilder().add(raw).build();
+        return CFMetaData.BatchlogCf.getCfDef().getColumnNameBuilder().add(raw).build();
     }
 
     private static List<Row> getRangeSlice(IDiskAtomFilter columnFilter)

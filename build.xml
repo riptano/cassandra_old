@@ -25,7 +25,7 @@
     <property name="debuglevel" value="source,lines,vars"/>
 
     <!-- default version and SCM information -->
-    <property name="base.version" value="1.2.2"/>
+    <property name="base.version" value="2.0"/>
     <property name="scm.connection" value="scm:git://git.apache.org/cassandra.git"/>
     <property name="scm.developerConnection" value="scm:git://git.apache.org/cassandra.git"/>
     <property name="scm.url" value="http://git-wip-us.apache.org/repos/asf?p=cassandra.git;a=tree"/>
@@ -166,7 +166,7 @@
     </target>
     <target depends="clean" name="cleanall"/>
 
-    <target name="realclean" depends="clean">
+    <target name="realclean" depends="clean" description="Remove the entire build directory and all downloaded artifacts">
         <delete dir="${build.dir}" />
     </target>
 
@@ -333,7 +333,7 @@
           <dependency groupId="org.xerial.snappy" artifactId="snappy-java" version="1.0.4.1"/>
           <dependency groupId="net.jpountz.lz4" artifactId="lz4" version="1.1.0"/>
           <dependency groupId="com.ning" artifactId="compress-lzf" version="0.8.4"/>
-          <dependency groupId="com.google.guava" artifactId="guava" version="12.0"/>
+          <dependency groupId="com.google.guava" artifactId="guava" version="13.0.1"/>
           <dependency groupId="commons-cli" artifactId="commons-cli" version="1.1"/>
           <dependency groupId="commons-codec" artifactId="commons-codec" version="1.2"/>
           <dependency groupId="commons-lang" artifactId="commons-lang" version="2.4"/>
@@ -379,7 +379,7 @@
           <dependency groupId="log4j" artifactId="log4j" version="1.2.16" />
           <dependency groupId="org.apache.cassandra" artifactId="cassandra-all" version="${version}" />
           <dependency groupId="org.apache.cassandra" artifactId="cassandra-thrift" version="${version}" />
-          <dependency groupId="com.yammer.metrics" artifactId="metrics-core" version="2.0.3" />
+          <dependency groupId="com.yammer.metrics" artifactId="metrics-core" version="2.2.0" />
           <dependency groupId="edu.stanford.ppl" artifactId="snaptree" version="0.1" />
           <dependency groupId="org.mindrot" artifactId="jbcrypt" version="0.3m" />
           <dependency groupId="io.netty" artifactId="netty" version="3.5.9.Final" />
@@ -484,6 +484,7 @@
         
         <!-- don't need jamm unless running a server in which case it needs to be a -javagent to be used anyway -->
         <dependency groupId="com.github.stephenc" artifactId="jamm"/>
+        <dependency groupId="io.netty" artifactId="netty"/>
       </artifact:pom>
       <artifact:pom id="thrift-pom"
                     artifactId="cassandra-thrift"
@@ -1160,11 +1161,6 @@
                timeout="60000" filter="**/SerializationsTest.java">
       <jvmarg value="-Dcassandra.version=1.0"/>
     </testmacro>
-  </target>
-
-  <target name="pbs-test" depends="build-test" description="Tests PBS predictor">
-    <testmacro suitename="unit" inputdir="${test.unit.src}"
-      timeout="15000" filter="**/PBSPredictorTest.java"/>
   </target>
 
   <target name="long-test" depends="build-test" description="Execute functional tests">

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,21 +15,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.cassandra.config;
 
-package org.apache.cassandra.service;
+import org.apache.cassandra.exceptions.ConfigurationException;
 
-public interface PBSPredictorMBean
+public interface ConfigurationLoader
 {
-    public PBSPredictionResult doPrediction(int n,
-                                            int r,
-                                            int w,
-                                            float timeSinceWrite, 
-                                            int numberVersionsStale,
-                                            float percentileLatency);
-
-    public void enableConsistencyPredictionLogging();
-    public void disableConsistencyPredictionLogging();
-
-    public void setMaxLoggedLatenciesForConsistencyPrediction(int maxLogged);
-    public void setNumberTrialsForConsistencyPrediction(int numTrials);
+    /**
+     * Loads a {@link Config} object to use to configure a node.
+     *
+     * @return the {@link Config} to use.
+     * @throws ConfigurationException if the configuration cannot be properly loaded.
+     */
+    Config loadConfig() throws ConfigurationException;
 }

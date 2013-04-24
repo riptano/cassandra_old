@@ -20,7 +20,6 @@ package org.apache.cassandra.db;
 
 import org.apache.cassandra.AbstractSerializationsTester;
 import org.apache.cassandra.Util;
-import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.filter.*;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.CompositeType;
@@ -107,7 +106,7 @@ public class SerializationsTest extends AbstractSerializationsTester
 
         DataInputStream in = getInput("db.RangeSliceCommand.bin");
         for (int i = 0; i < 6; i++)
-            MessageIn.read(in, getVersion(), "id");
+            MessageIn.read(in, getVersion(), -1);
         in.close();
     }
 
@@ -141,8 +140,8 @@ public class SerializationsTest extends AbstractSerializationsTester
         assert SliceByNamesReadCommand.serializer.deserialize(in, getVersion()) != null;
         assert ReadCommand.serializer.deserialize(in, getVersion()) != null;
         assert ReadCommand.serializer.deserialize(in, getVersion()) != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
         in.close();
     }
 
@@ -177,8 +176,8 @@ public class SerializationsTest extends AbstractSerializationsTester
         assert SliceFromReadCommand.serializer.deserialize(in, getVersion()) != null;
         assert ReadCommand.serializer.deserialize(in, getVersion()) != null;
         assert ReadCommand.serializer.deserialize(in, getVersion()) != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
         in.close();
     }
 
@@ -211,7 +210,6 @@ public class SerializationsTest extends AbstractSerializationsTester
 
     private void testRowMutationWrite() throws IOException
     {
-        RowMutation emptyRm = new RowMutation(statics.KS, statics.Key);
         RowMutation standardRowRm = new RowMutation(statics.KS, statics.StandardRow);
         RowMutation superRowRm = new RowMutation(statics.KS, statics.SuperRow);
         RowMutation standardRm = new RowMutation(statics.KS, statics.Key, statics.StandardCf);
@@ -222,14 +220,12 @@ public class SerializationsTest extends AbstractSerializationsTester
         RowMutation mixedRm = new RowMutation(statics.KS, statics.Key, mods);
 
         DataOutputStream out = getOutput("db.RowMutation.bin");
-        RowMutation.serializer.serialize(emptyRm, out, getVersion());
         RowMutation.serializer.serialize(standardRowRm, out, getVersion());
         RowMutation.serializer.serialize(superRowRm, out, getVersion());
         RowMutation.serializer.serialize(standardRm, out, getVersion());
         RowMutation.serializer.serialize(superRm, out, getVersion());
         RowMutation.serializer.serialize(mixedRm, out, getVersion());
 
-        emptyRm.createMessage().serialize(out, getVersion());
         standardRowRm.createMessage().serialize(out, getVersion());
         superRowRm.createMessage().serialize(out, getVersion());
         standardRm.createMessage().serialize(out, getVersion());
@@ -239,7 +235,6 @@ public class SerializationsTest extends AbstractSerializationsTester
         out.close();
 
         // test serializedSize
-        testSerializedSize(emptyRm, RowMutation.serializer);
         testSerializedSize(standardRowRm, RowMutation.serializer);
         testSerializedSize(superRowRm, RowMutation.serializer);
         testSerializedSize(standardRm, RowMutation.serializer);
@@ -250,8 +245,10 @@ public class SerializationsTest extends AbstractSerializationsTester
     @Test
     public void testRowMutationRead() throws IOException
     {
-        if (EXECUTE_WRITES)
-            testRowMutationWrite();
+        // row mutation deserialization requires being able to look up the table in the schema,
+        // so we need to rewrite this each time.  We can go back to testing on-disk data
+        // once we pull RM.table field out.
+        testRowMutationWrite();
 
         DataInputStream in = getInput("db.RowMutation.bin");
         assert RowMutation.serializer.deserialize(in, getVersion()) != null;
@@ -259,13 +256,11 @@ public class SerializationsTest extends AbstractSerializationsTester
         assert RowMutation.serializer.deserialize(in, getVersion()) != null;
         assert RowMutation.serializer.deserialize(in, getVersion()) != null;
         assert RowMutation.serializer.deserialize(in, getVersion()) != null;
-        assert RowMutation.serializer.deserialize(in, getVersion()) != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
         in.close();
     }
 
@@ -301,14 +296,14 @@ public class SerializationsTest extends AbstractSerializationsTester
         assert Truncation.serializer.deserialize(in, getVersion()) != null;
         assert TruncateResponse.serializer.deserialize(in, getVersion()) != null;
         assert TruncateResponse.serializer.deserialize(in, getVersion()) != null;
-        assert MessageIn.read(in, getVersion(), "id") != null;
+        assert MessageIn.read(in, getVersion(), -1) != null;
 
         // set up some fake callbacks so deserialization knows that what it's deserializing is a TruncateResponse
-        MessagingService.instance().setCallbackForTests("tr1", new CallbackInfo(null, null, TruncateResponse.serializer));
-        MessagingService.instance().setCallbackForTests("tr2", new CallbackInfo(null, null, TruncateResponse.serializer));
+        MessagingService.instance().setCallbackForTests(1, new CallbackInfo(null, null, TruncateResponse.serializer));
+        MessagingService.instance().setCallbackForTests(2, new CallbackInfo(null, null, TruncateResponse.serializer));
 
-        assert MessageIn.read(in, getVersion(), "tr1") != null;
-        assert MessageIn.read(in, getVersion(), "tr2") != null;
+        assert MessageIn.read(in, getVersion(), 1) != null;
+        assert MessageIn.read(in, getVersion(), 2) != null;
         in.close();
     }
 
@@ -364,8 +359,8 @@ public class SerializationsTest extends AbstractSerializationsTester
         private final ByteBuffer Start = ByteBufferUtil.bytes("Start");
         private final ByteBuffer Stop = ByteBufferUtil.bytes("Stop");
 
-        private final ColumnFamily StandardCf = ColumnFamily.create(KS, StandardCF);
-        private final ColumnFamily SuperCf = ColumnFamily.create(KS, SuperCF);
+        private final ColumnFamily StandardCf = TreeMapBackedSortedColumns.factory.create(KS, StandardCF);
+        private final ColumnFamily SuperCf = TreeMapBackedSortedColumns.factory.create(KS, SuperCF);
 
         private final Row StandardRow = new Row(Util.dk("key0"), StandardCf);
         private final Row SuperRow = new Row(Util.dk("key1"), SuperCf);

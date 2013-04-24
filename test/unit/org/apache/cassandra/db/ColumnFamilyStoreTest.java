@@ -32,7 +32,9 @@ import com.google.common.collect.Sets;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
+import org.apache.cassandra.OrderedJUnit4ClassRunner;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.config.CFMetaData;
@@ -58,6 +60,7 @@ import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
 import static org.apache.commons.lang.ArrayUtils.EMPTY_BYTE_ARRAY;
 import static org.junit.Assert.assertNull;
 
+@RunWith(OrderedJUnit4ClassRunner.class)
 public class ColumnFamilyStoreTest extends SchemaLoader
 {
     static byte[] bytes1, bytes2;
@@ -77,7 +80,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
     {
         Table table = Table.open("Keyspace1");
         ColumnFamilyStore cfs = table.getColumnFamilyStore("Standard1");
-        cfs.truncate().get();
+        cfs.truncateBlocking();
 
         RowMutation rm;
         rm = new RowMutation("Keyspace1", ByteBufferUtil.bytes("key1"));
@@ -100,7 +103,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
     {
         Table table = Table.open("Keyspace1");
         ColumnFamilyStore cfs = table.getColumnFamilyStore("Standard1");
-        cfs.truncate().get();
+        cfs.truncateBlocking();
 
         List<IMutation> rms = new LinkedList<IMutation>();
         RowMutation rm;
@@ -135,12 +138,12 @@ public class ColumnFamilyStoreTest extends SchemaLoader
                 QueryFilter sliceFilter = QueryFilter.getSliceFilter(Util.dk("key1"), "Standard2", ByteBufferUtil.EMPTY_BYTE_BUFFER, ByteBufferUtil.EMPTY_BYTE_BUFFER, false, 1);
                 ColumnFamily cf = store.getColumnFamily(sliceFilter);
                 assert cf.isMarkedForDelete();
-                assert cf.isEmpty();
+                assert cf.getColumnCount() == 0;
 
                 QueryFilter namesFilter = QueryFilter.getNamesFilter(Util.dk("key1"), "Standard2", ByteBufferUtil.bytes("a"));
                 cf = store.getColumnFamily(namesFilter);
                 assert cf.isMarkedForDelete();
-                assert cf.isEmpty();
+                assert cf.getColumnCount() == 0;
             }
         };
 
@@ -405,7 +408,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
         assert "k1".equals( key );
 
     }
-    
+
     @Test
     public void testDeleteOfInconsistentValuesInKeysIndex() throws Exception
     {
@@ -414,10 +417,10 @@ public class ColumnFamilyStoreTest extends SchemaLoader
 
         Table table = Table.open(keySpace);
         ColumnFamilyStore cfs = table.getColumnFamilyStore(cfName);
-        cfs.truncate().get();
+        cfs.truncateBlocking();
 
         ByteBuffer rowKey = ByteBufferUtil.bytes("k1");
-        ByteBuffer colName = ByteBufferUtil.bytes("birthdate"); 
+        ByteBuffer colName = ByteBufferUtil.bytes("birthdate");
         ByteBuffer val1 = ByteBufferUtil.bytes(1L);
         ByteBuffer val2 = ByteBufferUtil.bytes(2L);
 
@@ -442,7 +445,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
         table.apply(rm, true, false);
 
         // Now searching the index for either the old or new value should return 0 rows
-        // because the new value was not indexed and the old value should be ignored 
+        // because the new value was not indexed and the old value should be ignored
         // (and in fact purged from the index cf).
         // first check for the old value
         rows = table.getColumnFamilyStore(cfName).search(clause, range, 100, filter);
@@ -477,11 +480,11 @@ public class ColumnFamilyStoreTest extends SchemaLoader
 
         Table table = Table.open(keySpace);
         ColumnFamilyStore cfs = table.getColumnFamilyStore(cfName);
-        cfs.truncate().get();
+        cfs.truncateBlocking();
 
         ByteBuffer rowKey = ByteBufferUtil.bytes("k1");
         ByteBuffer clusterKey = ByteBufferUtil.bytes("ck1");
-        ByteBuffer colName = ByteBufferUtil.bytes("col1"); 
+        ByteBuffer colName = ByteBufferUtil.bytes("col1");
         CompositeType baseComparator = (CompositeType)cfs.getComparator();
         CompositeType.Builder builder = baseComparator.builder();
         builder.add(clusterKey);
@@ -516,7 +519,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
         table.apply(rm, true, false);
 
         // Now searching the index for either the old or new value should return 0 rows
-        // because the new value was not indexed and the old value should be ignored 
+        // because the new value was not indexed and the old value should be ignored
         // (and in fact purged from the index cf).
         // first check for the old value
         rows = table.getColumnFamilyStore(cfName).search(clause, range, 100, filter);
@@ -594,8 +597,8 @@ public class ColumnFamilyStoreTest extends SchemaLoader
         rm.apply();
 
         ColumnFamilyStore cfs = table.getColumnFamilyStore("Indexed2");
-        ColumnDefinition old = cfs.metadata.getColumn_metadata().get(ByteBufferUtil.bytes("birthdate"));
-        ColumnDefinition cd = new ColumnDefinition(old.name, old.getValidator(), IndexType.KEYS, null, "birthdate_index", null);
+        ColumnDefinition old = cfs.metadata.getColumnDefinition(ByteBufferUtil.bytes("birthdate"));
+        ColumnDefinition cd = ColumnDefinition.regularDef(old.name, old.getValidator(), null).setIndex("birthdate_index", IndexType.KEYS, null);
         Future<?> future = cfs.indexManager.addIndexedColumn(cd);
         future.get();
         // we had a bug (CASSANDRA-2244) where index would get created but not flushed -- check for that
@@ -671,7 +674,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
 
         assertRowAndColCount(1, 6, scfName, false, cfs.getRangeSlice(Util.range("f", "g"), 100, ThriftValidation.asIFilter(sp, cfs.metadata, scfName), null));
 
-        // deeleet.
+        // delete
         RowMutation rm = new RowMutation(table.getName(), key.key);
         rm.deleteRange(cfName, SuperColumns.startOf(scfName), SuperColumns.endOf(scfName), 2);
         rm.apply();
@@ -723,7 +726,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
 
     private static void putColsSuper(ColumnFamilyStore cfs, DecoratedKey key, ByteBuffer scfName, Column... cols) throws Throwable
     {
-        ColumnFamily cf = ColumnFamily.create(cfs.table.getName(), cfs.name);
+        ColumnFamily cf = TreeMapBackedSortedColumns.factory.create(cfs.table.getName(), cfs.name);
         for (Column col : cols)
             cf.addColumn(col.withUpdatedName(CompositeType.build(scfName, col.name())));
         RowMutation rm = new RowMutation(cfs.table.getName(), key.key, cf);
@@ -732,7 +735,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
 
     private static void putColsStandard(ColumnFamilyStore cfs, DecoratedKey key, Column... cols) throws Throwable
     {
-        ColumnFamily cf = ColumnFamily.create(cfs.table.getName(), cfs.name);
+        ColumnFamily cf = TreeMapBackedSortedColumns.factory.create(cfs.table.getName(), cfs.name);
         for (Column col : cols)
             cf.addColumn(col);
         RowMutation rm = new RowMutation(cfs.table.getName(), key.key, cf);
@@ -1085,7 +1088,7 @@ public class ColumnFamilyStoreTest extends SchemaLoader
         Table table = Table.open("Keyspace1");
         ColumnFamilyStore store = table.getColumnFamilyStore("Indexed1");
 
-        store.truncate();
+        store.truncateBlocking();
 
         for (int i = 0; i < 10; i++)
         {

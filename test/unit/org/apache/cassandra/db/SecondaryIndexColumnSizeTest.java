@@ -19,9 +19,7 @@
 package org.apache.cassandra.db;
 
 import java.nio.ByteBuffer;
-import java.util.List;
 import java.util.Set;
-import java.util.SortedSet;
 
 import org.junit.Test;
 
@@ -119,7 +117,7 @@ public class SecondaryIndexColumnSizeTest
         }
 
         @Override
-        public void truncate(long truncatedAt)
+        public void truncateBlocking(long truncatedAt)
         {
         }
 
@@ -194,7 +192,7 @@ public class SecondaryIndexColumnSizeTest
         }
 
         @Override
-        public void truncate(long truncatedAt)
+        public void truncateBlocking(long truncatedAt)
         {
         }
 

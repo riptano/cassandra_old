@@ -19,11 +19,9 @@ package org.apache.cassandra.db;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -32,13 +30,15 @@ import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.config.*;
+import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.config.KSMetaData;
+import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.filter.ColumnSlice;
 import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.service.StorageService;
@@ -73,7 +73,6 @@ public class Table
 
     /* ColumnFamilyStore per column family */
     private final ConcurrentMap<UUID, ColumnFamilyStore> columnFamilyStores = new ConcurrentHashMap<UUID, ColumnFamilyStore>();
-    private final Object[] indexLocks;
     private volatile AbstractReplicationStrategy replicationStrategy;
     public static final Function<String,Table> tableTransformer = new Function<String, Table>()
     {
@@ -262,10 +261,6 @@ public class Table
         assert metadata != null : "Unknown keyspace " + table;
         createReplicationStrategy(metadata);
 
-        indexLocks = new Object[DatabaseDescriptor.getConcurrentWriters() * 128];
-        for (int i = 0; i < indexLocks.length; i++)
-            indexLocks[i] = new Object();
-
         for (CFMetaData cfm : new ArrayList<CFMetaData>(metadata.cfMetaData().values()))
         {
             logger.debug("Initializing {}.{}", getName(), cfm.cfName);
@@ -299,18 +294,7 @@ public class Table
     // disassociate a cfs from this table instance.
     private void unloadCf(ColumnFamilyStore cfs) throws IOException
     {
-        try
-        {
-            cfs.forceBlockingFlush();
-        }
-        catch (ExecutionException e)
-        {
-            throw new IOException(e);
-        }
-        catch (InterruptedException e)
-        {
-            throw new IOException(e);
-        }
+        cfs.forceBlockingFlush();
         cfs.invalidate();
     }
 
@@ -387,7 +371,7 @@ public class Table
                 }
 
                 Tracing.trace("Adding to {} memtable", cf.metadata().cfName);
-                cfs.apply(key, cf, updateIndexes ? cfs.indexManager.updaterFor(key, true) : SecondaryIndexManager.nullUpdater);
+                cfs.apply(key, cf, updateIndexes ? cfs.indexManager.updaterFor(key) : SecondaryIndexManager.nullUpdater);
             }
         }
         finally
@@ -416,33 +400,23 @@ public class Table
         switchLock.readLock().lock();
         try
         {
-            // Our index lock is per-row, but we don't want to hold writes for too long, so for large rows
-            // we release the lock between pages
             SliceQueryPager pager = new SliceQueryPager(cfs, key, ColumnSlice.ALL_COLUMNS_ARRAY);
             while (pager.hasNext())
             {
-                synchronized (cfs.table.indexLockFor(key.key))
+                ColumnFamily cf = pager.next();
+                ColumnFamily cf2 = cf.cloneMeShallow();
+                for (Column column : cf)
                 {
-                    ColumnFamily cf = pager.next();
-                    ColumnFamily cf2 = cf.cloneMeShallow();
-                    for (Column column : cf)
-                    {
-                        if (cfs.indexManager.indexes(column.name(), indexes))
-                            cf2.addColumn(column);
-                    }
-                    cfs.indexManager.indexRow(key.key, cf2);
+                    if (cfs.indexManager.indexes(column.name(), indexes))
+                        cf2.addColumn(column);
                 }
+                cfs.indexManager.indexRow(key.key, cf2);
             }
         }
         finally
         {
             switchLock.readLock().unlock();
         }
-    }
-
-    private Object indexLockFor(ByteBuffer key)
-    {
-        return indexLocks[Math.abs(key.hashCode() % indexLocks.length)];
     }
 
     public List<Future<?>> flush()

@@ -29,10 +29,11 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.SetMultimap;
 import com.google.common.collect.Sets;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
+import org.apache.cassandra.OrderedJUnit4ClassRunner;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
@@ -41,28 +42,16 @@ import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableScanner;
-import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 
 import static junit.framework.Assert.*;
 
+@RunWith(OrderedJUnit4ClassRunner.class)
 public class CompactionsTest extends SchemaLoader
 {
     public static final String TABLE1 = "Keyspace1";
-
-    @Test
-    public void testBlacklistingWithSizeTieredCompactionStrategy() throws Exception
-    {
-        testBlacklisting(SizeTieredCompactionStrategy.class.getCanonicalName());
-    }
-
-    @Test
-    public void testBlacklistingWithLeveledCompactionStrategy() throws Exception
-    {
-        testBlacklisting(LeveledCompactionStrategy.class.getCanonicalName());
-    }
 
     public ColumnFamilyStore testSingleSSTableCompaction(String strategyClassName) throws Exception
     {
@@ -221,7 +210,7 @@ public class CompactionsTest extends SchemaLoader
         assertEquals(2, cfs.getSSTables().size());
 
         // Now, we remove the sstable that was just created to force the use of EchoedRow (so that it doesn't hide the problem)
-        cfs.markCompacted(Collections.singleton(tmpSSTable), OperationType.UNKNOWN);
+        cfs.markObsolete(Collections.singleton(tmpSSTable), OperationType.UNKNOWN);
         assertEquals(1, cfs.getSSTables().size());
 
         // Now assert we do have the 4 keys
@@ -231,13 +220,10 @@ public class CompactionsTest extends SchemaLoader
     @Test
     public void testDontPurgeAccidentaly() throws IOException, ExecutionException, InterruptedException
     {
-        // Testing with and without forcing deserialization. Without deserialization, EchoedRow will be used.
-        testDontPurgeAccidentaly("test1", "Super5", false);
-        testDontPurgeAccidentaly("test2", "Super5", true);
+        testDontPurgeAccidentaly("test1", "Super5");
 
         // Use CF with gc_grace=0, see last bug of CASSANDRA-2786
-        testDontPurgeAccidentaly("test1", "SuperDirectGC", false);
-        testDontPurgeAccidentaly("test2", "SuperDirectGC", true);
+        testDontPurgeAccidentaly("test1", "SuperDirectGC");
     }
 
     @Test
@@ -309,7 +295,7 @@ public class CompactionsTest extends SchemaLoader
         assert !compactionLogs.containsKey(Pair.create(TABLE1, cf));
     }
 
-    private void testDontPurgeAccidentaly(String k, String cfname, boolean forceDeserialize) throws IOException, ExecutionException, InterruptedException
+    private void testDontPurgeAccidentaly(String k, String cfname) throws IOException, ExecutionException, InterruptedException
     {
         // This test catches the regression of CASSANDRA-2786
         Table table = Table.open(TABLE1);
@@ -330,7 +316,7 @@ public class CompactionsTest extends SchemaLoader
         Collection<SSTableReader> sstablesBefore = cfs.getSSTables();
 
         QueryFilter filter = QueryFilter.getIdentityFilter(key, cfname);
-        assert !cfs.getColumnFamily(filter).isEmpty();
+        assert !(cfs.getColumnFamily(filter).getColumnCount() == 0);
 
         // Remove key
         rm = new RowMutation(TABLE1, key.key);
@@ -338,7 +324,7 @@ public class CompactionsTest extends SchemaLoader
         rm.apply();
 
         ColumnFamily cf = cfs.getColumnFamily(filter);
-        assert cf == null || cf.isEmpty() : "should be empty: " + cf;
+        assert cf == null || cf.getColumnCount() == 0 : "should be empty: " + cf;
 
         // Sleep one second so that the removal is indeed purgeable even with gcgrace == 0
         Thread.sleep(1000);
@@ -354,102 +340,6 @@ public class CompactionsTest extends SchemaLoader
         Util.compact(cfs, toCompact);
 
         cf = cfs.getColumnFamily(filter);
-        assert cf == null || cf.isEmpty() : "should be empty: " + cf;
-    }
-
-    public void testBlacklisting(String compactionStrategy) throws Exception
-    {
-        // this test does enough rows to force multiple block indexes to be used
-        Table table = Table.open(TABLE1);
-        final ColumnFamilyStore cfs = table.getColumnFamilyStore("Standard1");
-
-        final int ROWS_PER_SSTABLE = 10;
-        final int SSTABLES = cfs.metadata.getIndexInterval() * 2 / ROWS_PER_SSTABLE;
-
-        cfs.setCompactionStrategyClass(compactionStrategy);
-
-        // disable compaction while flushing
-        cfs.disableAutoCompaction();
-        //test index corruption
-        //now create a few new SSTables
-        long maxTimestampExpected = Long.MIN_VALUE;
-        Set<DecoratedKey> inserted = new HashSet<DecoratedKey>();
-        for (int j = 0; j < SSTABLES; j++)
-        {
-            for (int i = 0; i < ROWS_PER_SSTABLE; i++)
-            {
-                DecoratedKey key = Util.dk(String.valueOf(i % 2));
-                RowMutation rm = new RowMutation(TABLE1, key.key);
-                long timestamp = j * ROWS_PER_SSTABLE + i;
-                rm.add("Standard1", ByteBufferUtil.bytes(String.valueOf(i / 2)),
-                        ByteBufferUtil.EMPTY_BYTE_BUFFER,
-                        timestamp);
-                maxTimestampExpected = Math.max(timestamp, maxTimestampExpected);
-                rm.apply();
-                inserted.add(key);
-            }
-            cfs.forceBlockingFlush();
-            assertMaxTimestamp(cfs, maxTimestampExpected);
-            assertEquals(inserted.toString(), inserted.size(), Util.getRangeSlice(cfs).size());
-        }
-
-        Collection<SSTableReader> sstables = cfs.getSSTables();
-        int currentSSTable = 0;
-        int sstablesToCorrupt = 8;
-
-        // corrupt first 'sstablesToCorrupt' SSTables
-        for (SSTableReader sstable : sstables)
-        {
-            if(currentSSTable + 1 > sstablesToCorrupt)
-                break;
-
-            RandomAccessFile raf = null;
-
-            try
-            {
-                raf = new RandomAccessFile(sstable.getFilename(), "rw");
-                assertNotNull(raf);
-                raf.write(0xFFFFFF);
-            }
-            finally
-            {
-                FileUtils.closeQuietly(raf);
-            }
-
-            currentSSTable++;
-        }
-
-        int failures = 0;
-
-        // close error output steam to avoid printing ton of useless RuntimeException
-        System.err.close();
-
-        try
-        {
-            // in case something will go wrong we don't want to loop forever using for (;;)
-            for (int i = 0; i < sstables.size(); i++)
-            {
-                try
-                {
-                    cfs.forceMajorCompaction();
-                }
-                catch (Exception e)
-                {
-                    failures++;
-                    continue;
-                }
-
-                assertEquals(sstablesToCorrupt + 1, cfs.getSSTables().size());
-                break;
-            }
-        }
-        finally
-        {
-            System.setErr(new PrintStream(new ByteArrayOutputStream()));
-        }
-
-
-        cfs.truncate();
-        assertEquals(failures, sstablesToCorrupt);
+        assert cf == null || cf.getColumnCount() == 0 : "should be empty: " + cf;
     }
 }

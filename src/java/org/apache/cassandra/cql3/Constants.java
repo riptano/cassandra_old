@@ -18,16 +18,12 @@
 package org.apache.cassandra.cql3;
 
 import java.nio.ByteBuffer;
-import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 
-import com.google.common.base.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.ColumnFamily;
-import org.apache.cassandra.db.filter.QueryPath;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.CollectionType;
@@ -48,6 +44,38 @@ public abstract class Constants
     {
         STRING, INTEGER, UUID, FLOAT, BOOLEAN, HEX;
     }
+
+    public static final Term.Raw NULL_LITERAL = new Term.Raw()
+    {
+        private final Term.Terminal NULL_VALUE = new Value(null)
+        {
+            @Override
+            public Terminal bind(List<ByteBuffer> values)
+            {
+                // We return null because that makes life easier for collections
+                return null;
+            }
+        };
+
+        public Term prepare(ColumnSpecification receiver) throws InvalidRequestException
+        {
+            if (!isAssignableTo(receiver))
+                throw new InvalidRequestException("Invalid null value for counter increment/decrement");
+
+            return NULL_VALUE;
+        }
+
+        public boolean isAssignableTo(ColumnSpecification receiver)
+        {
+            return !(receiver.type instanceof CounterColumnType);
+        }
+
+        @Override
+        public String toString()
+        {
+            return null;
+        }
+    };
 
     public static class Literal implements Term.Raw
     {

@@ -21,8 +21,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
+import com.google.common.collect.Sets;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,11 +41,11 @@ public class CompactionTask extends AbstractCompactionTask
     private Set<SSTableReader> toCompact;
     private CompactionExecutorStatsCollector collector;
 
-    public CompactionTask(ColumnFamilyStore cfs, Collection<SSTableReader> sstables, final int gcBefore)
+    public CompactionTask(ColumnFamilyStore cfs, Iterable<SSTableReader> sstables, final int gcBefore)
     {
         super(cfs, sstables);
         this.gcBefore = gcBefore;
-        toCompact = new HashSet<SSTableReader>(sstables);
+        toCompact = Sets.newHashSet(sstables);
     }
 
     public static synchronized long addToTotalBytesCompacted(long bytesCompacted)
@@ -92,6 +92,10 @@ public class CompactionTask extends AbstractCompactionTask
         // it is not empty, it may compact down to nothing if all rows are deleted.
         assert sstables != null && sstableDirectory != null;
 
+        // Note that the current compaction strategy, is not necessarily the one this task was created under.
+        // This should be harmless; see comments to CFS.maybeReloadCompactionStrategy.
+        AbstractCompactionStrategy strategy = cfs.getCompactionStrategy();
+
         if (DatabaseDescriptor.isSnapshotBeforeCompaction())
             cfs.snapshotWithoutFlush(System.currentTimeMillis() + "-compact-" + cfs.name);
 
@@ -102,6 +106,8 @@ public class CompactionTask extends AbstractCompactionTask
         UUID taskId = SystemTable.startCompaction(cfs, toCompact);
 
         CompactionController controller = new CompactionController(cfs, toCompact, gcBefore);
+        Set<SSTableReader> actuallyCompact = Sets.difference(toCompact, controller.getFullyExpiredSSTables());
+
         // new sstables from flush can be added during a compaction, but only the compaction can remove them,
         // so in our single-threaded compaction world this is a valid way of determining if we're compacting
         // all the sstables (that existed when we started)
@@ -110,16 +116,15 @@ public class CompactionTask extends AbstractCompactionTask
         long startTime = System.currentTimeMillis();
         long totalkeysWritten = 0;
 
-        AbstractCompactionStrategy strategy = cfs.getCompactionStrategy();
-        long estimatedTotalKeys = Math.max(cfs.metadata.getIndexInterval(), SSTableReader.getApproximateKeyCount(toCompact, cfs.metadata));
-        long estimatedSSTables = Math.max(1, SSTable.getTotalBytes(toCompact) / strategy.getMaxSSTableSize());
+        long estimatedTotalKeys = Math.max(cfs.metadata.getIndexInterval(), SSTableReader.getApproximateKeyCount(actuallyCompact, cfs.metadata));
+        long estimatedSSTables = Math.max(1, SSTable.getTotalBytes(actuallyCompact) / strategy.getMaxSSTableSize());
         long keysPerSSTable = (long) Math.ceil((double) estimatedTotalKeys / estimatedSSTables);
         if (logger.isDebugEnabled())
             logger.debug("Expected bloom filter size : " + keysPerSSTable);
 
         AbstractCompactionIterable ci = DatabaseDescriptor.isMultithreadedCompaction()
-                                      ? new ParallelCompactionIterable(compactionType, strategy.getScanners(toCompact), controller)
-                                      : new CompactionIterable(compactionType, strategy.getScanners(toCompact), controller);
+                                      ? new ParallelCompactionIterable(compactionType, strategy.getScanners(actuallyCompact), controller)
+                                      : new CompactionIterable(compactionType, strategy.getScanners(actuallyCompact), controller);
         CloseableIterator<AbstractCompactedRow> iter = ci.iterator();
         Map<DecoratedKey, RowIndexEntry> cachedKeys = new HashMap<DecoratedKey, RowIndexEntry>();
 
@@ -139,11 +144,11 @@ public class CompactionTask extends AbstractCompactionTask
                 // don't mark compacted in the finally block, since if there _is_ nondeleted data,
                 // we need to sync it (via closeAndOpen) first, so there is no period during which
                 // a crash could cause data loss.
-                cfs.markCompacted(toCompact, compactionType);
+                cfs.markObsolete(toCompact, compactionType);
                 return;
             }
 
-            SSTableWriter writer = cfs.createCompactionWriter(compactionType, keysPerSSTable, sstableDirectory, toCompact);
+            SSTableWriter writer = createCompactionWriter(sstableDirectory, keysPerSSTable);
             writers.add(writer);
             while (iter.hasNext())
             {
@@ -167,7 +172,7 @@ public class CompactionTask extends AbstractCompactionTask
 
                 if (DatabaseDescriptor.getPreheatKeyCache())
                 {
-                    for (SSTableReader sstable : toCompact)
+                    for (SSTableReader sstable : actuallyCompact)
                     {
                         if (sstable.getCachedPosition(row.key, false) != null)
                         {
@@ -181,7 +186,7 @@ public class CompactionTask extends AbstractCompactionTask
                 {
                     // tmp = false because later we want to query it with descriptor from SSTableReader
                     cachedKeyMap.put(writer.descriptor.asTemporary(false), cachedKeys);
-                    writer = cfs.createCompactionWriter(compactionType, keysPerSSTable, sstableDirectory, toCompact);
+                    writer = createCompactionWriter(sstableDirectory, keysPerSSTable);
                     writers.add(writer);
                     cachedKeys = new HashMap<DecoratedKey, RowIndexEntry>();
                 }
@@ -208,7 +213,7 @@ public class CompactionTask extends AbstractCompactionTask
             // also remove already completed SSTables
             for (SSTableReader sstable : sstables)
             {
-                sstable.markCompacted();
+                sstable.markObsolete();
                 sstable.releaseReference();
             }
             throw Throwables.propagate(t);
@@ -217,15 +222,6 @@ public class CompactionTask extends AbstractCompactionTask
         {
             controller.close();
 
-            try
-            {
-                iter.close();
-            }
-            catch (IOException e)
-            {
-                throw new RuntimeException(e);
-            }
-
             // point of no return -- the new sstables are live on disk; next we'll start deleting the old ones
             // (in replaceCompactedSSTables)
             if (taskId != null)
@@ -233,15 +229,23 @@ public class CompactionTask extends AbstractCompactionTask
 
             if (collector != null)
                 collector.finishCompaction(ci);
+
+            try
+            {
+                // We don't expect this to throw, but just in case, we do it after the cleanup above, to make sure
+                // we don't end up with compaction information hanging around indefinitely in limbo.
+                iter.close();
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
         }
 
         cfs.replaceCompactedSSTables(toCompact, sstables, compactionType);
         // TODO: this doesn't belong here, it should be part of the reader to load when the tracker is wired up
         for (SSTableReader sstable : sstables)
-        {
-            for (Map.Entry<DecoratedKey, RowIndexEntry> entry : cachedKeyMap.get(sstable.descriptor).entrySet())
-               sstable.cacheKey(entry.getKey(), entry.getValue());
-        }
+            sstable.preheat(cachedKeyMap.get(sstable.descriptor));
 
         if (logger.isInfoEnabled())
         {
@@ -271,6 +275,20 @@ public class CompactionTask extends AbstractCompactionTask
                                       toCompact.size(), builder.toString(), startsize, endsize, (int) (ratio * 100), dTime, mbps, totalSourceRows, totalkeysWritten, mergeSummary.toString()));
             logger.debug(String.format("CF Total Bytes Compacted: %,d", CompactionTask.addToTotalBytesCompacted(endsize)));
         }
+    }
+
+    private SSTableWriter createCompactionWriter(File sstableDirectory, long keysPerSSTable)
+    {
+        return new SSTableWriter(cfs.getTempSSTablePath(sstableDirectory),
+                                 keysPerSSTable,
+                                 cfs.metadata,
+                                 cfs.partitioner,
+                                 SSTableMetadata.createCollector(toCompact, getLevel()));
+    }
+
+    protected int getLevel()
+    {
+        return 0;
     }
 
     protected boolean partialCompactionsAcceptable()

@@ -484,7 +484,7 @@ alterTableStatement returns [AlterTableStatement expr]
     : K_ALTER K_COLUMNFAMILY cf=columnFamilyName
           ( K_ALTER id=cident K_TYPE v=comparatorType { type = AlterTableStatement.Type.ALTER; }
           | K_ADD   id=cident v=comparatorType        { type = AlterTableStatement.Type.ADD; }
-          // | K_DROP  id=cident                         { type = AlterTableStatement.Type.DROP; }
+          | K_DROP  id=cident                         { type = AlterTableStatement.Type.DROP; }
           | K_WITH  properties[props]                 { type = AlterTableStatement.Type.OPTS; }
           | K_RENAME                                  { type = AlterTableStatement.Type.RENAME; }
                id1=cident K_TO toId1=cident { renames.put(id1, toId1); }
@@ -704,6 +704,7 @@ collection_literal returns [Term.Raw value]
 value returns [Term.Raw value]
     : c=constant           { $value = c; }
     | l=collection_literal { $value = l; }
+    | K_NULL               { $value = Constants.NULL_LITERAL; }
     | QMARK                { $value = new AbstractMarker.Raw(++currentBindMarkerIdx); }
     ;
 
@@ -961,6 +962,8 @@ K_TIMEUUID:    T I M E U U I D;
 K_TOKEN:       T O K E N;
 K_WRITETIME:   W R I T E T I M E;
 
+K_NULL:        N U L L;
+
 K_MAP:         M A P;
 K_LIST:        L I S T;
 
@@ -1049,7 +1052,7 @@ IDENT
     ;
 
 HEXNUMBER
-    : '0' X HEX+
+    : '0' X HEX*
     ;
 
 UUID

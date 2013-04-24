@@ -31,7 +31,6 @@ import org.apache.cassandra.db.index.SecondaryIndexSearcher;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.thrift.IndexExpression;
-import org.apache.cassandra.thrift.IndexOperator;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.HeapAllocator;
 import org.slf4j.Logger;
@@ -44,34 +43,6 @@ public class KeysSearcher extends SecondaryIndexSearcher
     public KeysSearcher(SecondaryIndexManager indexManager, Set<ByteBuffer> columns)
     {
         super(indexManager, columns);
-    }
-
-    private IndexExpression highestSelectivityPredicate(List<IndexExpression> clause)
-    {
-        IndexExpression best = null;
-        int bestMeanCount = Integer.MAX_VALUE;
-        for (IndexExpression expression : clause)
-        {
-            //skip columns belonging to a different index type
-            if(!columns.contains(expression.column_name))
-                continue;
-
-            SecondaryIndex index = indexManager.getIndexForColumn(expression.column_name);
-            if (index == null || (expression.op != IndexOperator.EQ))
-                continue;
-            int columns = index.getIndexCfs().getMeanColumns();
-            if (columns < bestMeanCount)
-            {
-                best = expression;
-                bestMeanCount = columns;
-            }
-        }
-        return best;
-    }
-
-    public boolean isIndexing(List<IndexExpression> clause)
-    {
-        return highestSelectivityPredicate(clause) != null;
     }
 
     @Override
@@ -190,9 +161,9 @@ public class KeysSearcher extends SecondaryIndexSearcher
                         ColumnFamily data = baseCfs.getColumnFamily(new QueryFilter(dk, baseCfs.name, filter.initialFilter()));
                         // While the column family we'll get in the end should contains the primary clause column, the initialFilter may not have found it and can thus be null
                         if (data == null)
-                            data = ColumnFamily.create(baseCfs.metadata);
+                            data = TreeMapBackedSortedColumns.factory.create(baseCfs.metadata);
 
-                        // as in CFS.filter - extend the filter to ensure we include the columns 
+                        // as in CFS.filter - extend the filter to ensure we include the columns
                         // from the index expressions, just in case they weren't included in the initialFilter
                         IDiskAtomFilter extraFilter = filter.getExtraFilter(data);
                         if (extraFilter != null)
@@ -201,8 +172,8 @@ public class KeysSearcher extends SecondaryIndexSearcher
                             if (cf != null)
                                 data.addAll(cf, HeapAllocator.instance);
                         }
-                        
-                        if (isIndexValueStale(data, primary.column_name, indexKey.key))
+
+                        if (((KeysIndex)index).isIndexEntryStale(indexKey.key, data))
                         {
                             // delete the index entry w/ its own timestamp
                             Column dummyColumn = new Column(primary.column_name, indexKey.key, column.timestamp());

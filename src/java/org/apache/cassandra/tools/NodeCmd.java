@@ -47,8 +47,6 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.locator.EndpointSnitchInfoMBean;
 import org.apache.cassandra.net.MessagingServiceMBean;
 import org.apache.cassandra.service.CacheServiceMBean;
-import org.apache.cassandra.service.PBSPredictionResult;
-import org.apache.cassandra.service.PBSPredictorMBean;
 import org.apache.cassandra.service.StorageProxyMBean;
 import org.apache.cassandra.utils.EstimatedHistogram;
 import org.apache.cassandra.utils.Pair;
@@ -67,6 +65,7 @@ public class NodeCmd
     private static final Pair<String, String> LOCAL_DC_REPAIR_OPT = Pair.create("local", "in-local-dc");
     private static final Pair<String, String> START_TOKEN_OPT = Pair.create("st", "start-token");
     private static final Pair<String, String> END_TOKEN_OPT = Pair.create("et", "end-token");
+    private static final Pair<String, String> UPGRADE_ALL_SSTABLE_OPT = Pair.create("a", "include-all-sstables");
 
     private static final String DEFAULT_HOST = "127.0.0.1";
     private static final int DEFAULT_PORT = 7199;
@@ -89,6 +88,7 @@ public class NodeCmd
         options.addOption(LOCAL_DC_REPAIR_OPT, false, "only repair against nodes in the same datacenter");
         options.addOption(START_TOKEN_OPT, true, "token at which repair range starts");
         options.addOption(END_TOKEN_OPT, true, "token at which repair range ends");
+        options.addOption(UPGRADE_ALL_SSTABLE_OPT, false, "includes sstables that are already on the most recent version during upgradesstables");
     }
 
     public NodeCmd(NodeProbe probe)
@@ -105,15 +105,19 @@ public class NodeCmd
         COMPACT,
         COMPACTIONSTATS,
         DECOMMISSION,
+        DISABLEBINARY,
         DISABLEGOSSIP,
         DISABLEHANDOFF,
         DISABLETHRIFT,
         DRAIN,
+        ENABLEBINARY,
         ENABLEGOSSIP,
         ENABLEHANDOFF,
         ENABLETHRIFT,
         FLUSH,
         GETCOMPACTIONTHRESHOLD,
+        DISABLEAUTOCOMPACTION,
+        ENABLEAUTOCOMPACTION,
         GETENDPOINTS,
         GETSSTABLES,
         GOSSIPINFO,
@@ -141,6 +145,7 @@ public class NodeCmd
         SETTRACEPROBABILITY,
         SNAPSHOT,
         STATUS,
+        STATUSBINARY,
         STATUSTHRIFT,
         STOP,
         TPSTATS,
@@ -150,7 +155,6 @@ public class NodeCmd
         RANGEKEYSAMPLE,
         REBUILD_INDEX,
         RESETLOCALSCHEMA,
-        PREDICTCONSISTENCY
     }
 
 
@@ -212,7 +216,16 @@ public class NodeCmd
         for (Map.Entry<String, String> entry : tokensToEndpoints.entrySet())
             endpointsToTokens.put(entry.getValue(), entry.getKey());
 
-        String format = "%-16s%-12s%-7s%-8s%-16s%-20s%-44s%n";
+        int maxAddressLength = Collections.max(endpointsToTokens.keys(), new Comparator<String>() {
+            @Override
+            public int compare(String first, String second)
+            {
+                return ((Integer)first.length()).compareTo((Integer)second.length());
+            }
+        }).length();
+
+        String formatPlaceholder = "%%-%ds  %%-12s%%-7s%%-8s%%-16s%%-20s%%-44s%%n";
+        String format = String.format(formatPlaceholder, maxAddressLength);
 
         // Calculate per-token ownership of the ring
         Map<InetAddress, Float> ownerships;
@@ -328,6 +341,7 @@ public class NodeCmd
     private class ClusterStatus
     {
         String kSpace = null, format = null;
+        int maxAddressLength;
         Collection<String> joiningNodes, leavingNodes, movingNodes, liveNodes, unreachableNodes;
         Map<String, String> loadMap, hostIDMap, tokensToEndpoints;
         EndpointSnitchInfoMBean epSnitchInfo;
@@ -376,7 +390,10 @@ public class NodeCmd
             if (format == null)
             {
                 StringBuffer buf = new StringBuffer();
-                buf.append("%s%s  %-16s  %-9s  ");            // status, address, and load
+                String addressPlaceholder = String.format("%%-%ds  ", maxAddressLength);
+                buf.append("%s%s  ");                         // status
+                buf.append(addressPlaceholder);               // address
+                buf.append("%-9s  ");                         // load
                 if (!isTokenPerNode)  buf.append("%-6s  ");   // "Tokens"
                 if (hasEffectiveOwns) buf.append("%-16s  ");  // "Owns (effective)"
                 else                  buf.append("%-5s  ");   // "Owns
@@ -435,6 +452,7 @@ public class NodeCmd
         {
             Map<InetAddress, Float> ownerships;
             boolean hasEffectiveOwns = false, isTokenPerNode = true;
+
             try
             {
                 ownerships = probe.effectiveOwnership(kSpace);
@@ -448,6 +466,21 @@ public class NodeCmd
             // More tokens then nodes (aka vnodes)?
             if (new HashSet<String>(tokensToEndpoints.values()).size() < tokensToEndpoints.keySet().size())
                 isTokenPerNode = false;
+
+            maxAddressLength = 0;
+            for (Map.Entry<String, Map<InetAddress, Float>> dc : getOwnershipByDc(ownerships).entrySet())
+            {
+                int dcMaxAddressLength = Collections.max(dc.getValue().keySet(), new Comparator<InetAddress>() {
+                    @Override
+                    public int compare(InetAddress first, InetAddress second)
+                    {
+                        return ((Integer)first.getHostAddress().length()).compareTo((Integer)second.getHostAddress().length());
+                    }
+                }).getHostAddress().length();
+
+                if(dcMaxAddressLength > maxAddressLength)
+                    maxAddressLength = dcMaxAddressLength;
+            }
 
             // Datacenters
             for (Map.Entry<String, Map<InetAddress, Float>> dc : getOwnershipByDc(ownerships).entrySet())
@@ -879,51 +912,14 @@ public class NodeCmd
         }
     }
 
+    private void printIsNativeTransportRunning(PrintStream outs)
+    {
+        outs.println(probe.isNativeTransportRunning() ? "running" : "not running");
+    }
+
     private void printIsThriftServerRunning(PrintStream outs)
     {
         outs.println(probe.isThriftServerRunning() ? "running" : "not running");
-    }
-
-    public void predictConsistency(Integer replicationFactor,
-                                   Integer timeAfterWrite,
-                                   Integer numVersions,
-                                   Float percentileLatency,
-                                   PrintStream output)
-    {
-        PBSPredictorMBean predictorMBean = probe.getPBSPredictorMBean();
-
-        for(int r = 1; r <= replicationFactor; ++r) {
-            for(int w = 1; w <= replicationFactor; ++w) {
-                if(w+r > replicationFactor+1)
-                    continue;
-
-                try {
-                    PBSPredictionResult result = predictorMBean.doPrediction(replicationFactor,
-                                                                             r,
-                                                                             w,
-                                                                             timeAfterWrite,
-                                                                             numVersions,
-                                                                             percentileLatency);
-
-                    if(r == 1 && w == 1) {
-                        output.printf("%dms after a given write, with maximum version staleness of k=%d%n", timeAfterWrite, numVersions);
-                    }
-
-                    output.printf("N=%d, R=%d, W=%d%n", replicationFactor, r, w);
-                    output.printf("Probability of consistent reads: %f%n", result.getConsistencyProbability());
-                    output.printf("Average read latency: %fms (%.3fth %%ile %dms)%n", result.getAverageReadLatency(),
-                                                                                   result.getPercentileReadLatencyPercentile()*100,
-                                                                                   result.getPercentileReadLatencyValue());
-                    output.printf("Average write latency: %fms (%.3fth %%ile %dms)%n%n", result.getAverageWriteLatency(),
-                                                                                      result.getPercentileWriteLatencyPercentile()*100,
-                                                                                      result.getPercentileWriteLatencyValue());
-                } catch (Exception e) {
-                        System.out.println(e.getMessage());
-                        e.printStackTrace();
-                        return;
-                }
-            }
-        }
     }
 
     public static void main(String[] args) throws IOException, InterruptedException, ConfigurationException, ParseException
@@ -1017,6 +1013,9 @@ public class NodeCmd
                 case TPSTATS         : nodeCmd.printThreadPoolStats(System.out); break;
                 case VERSION         : nodeCmd.printReleaseVersion(System.out); break;
                 case COMPACTIONSTATS : nodeCmd.printCompactionStats(System.out); break;
+                case DISABLEBINARY   : probe.stopNativeTransport(); break;
+                case ENABLEBINARY    : probe.startNativeTransport(); break;
+                case STATUSBINARY    : nodeCmd.printIsNativeTransportRunning(System.out); break;
                 case DISABLEGOSSIP   : probe.stopGossiping(); break;
                 case ENABLEGOSSIP    : probe.startGossiping(); break;
                 case DISABLEHANDOFF  : probe.disableHintedHandoff(); break;
@@ -1126,6 +1125,8 @@ public class NodeCmd
                 case FLUSH   :
                 case SCRUB   :
                 case UPGRADESSTABLES   :
+                case DISABLEAUTOCOMPACTION:
+                case ENABLEAUTOCOMPACTION:
                     optionalKSandCFs(command, cmd, arguments, probe);
                     break;
 
@@ -1153,7 +1154,6 @@ public class NodeCmd
                     if (minthreshold < 2 && maxthreshold != 0)    { badUse("Min threshold must be at least 2"); }
                     probe.setCompactionThreshold(arguments[0], arguments[1], minthreshold, maxthreshold);
                     break;
-
                 case GETENDPOINTS :
                     if (arguments.length != 3) { badUse("getendpoints requires ks, cf and key args"); }
                     nodeCmd.printEndPoints(arguments[0], arguments[1], arguments[2], System.out);
@@ -1197,20 +1197,6 @@ public class NodeCmd
 
                 case RANGEKEYSAMPLE :
                     nodeCmd.printRangeKeySample(System.out);
-                    break;
-
-                case PREDICTCONSISTENCY:
-                    if (arguments.length < 2) { badUse("Requires replication factor and time"); }
-                    int numVersions = 1;
-                    if (arguments.length == 3) { numVersions = Integer.parseInt(arguments[2]); }
-                    float percentileLatency = .999f;
-                    if (arguments.length == 4) { percentileLatency = Float.parseFloat(arguments[3]); }
-
-                    nodeCmd.predictConsistency(Integer.parseInt(arguments[0]),
-                                               Integer.parseInt(arguments[1]),
-                                               numVersions,
-                                               percentileLatency,
-                                               System.out);
                     break;
 
                 default :
@@ -1374,8 +1360,15 @@ public class NodeCmd
                     catch (ExecutionException ee) { err(ee, "Error occurred while scrubbing keyspace " + keyspace); }
                     break;
                 case UPGRADESSTABLES :
-                    try { probe.upgradeSSTables(keyspace, columnFamilies); }
+                    boolean excludeCurrentVersion = !cmd.hasOption(UPGRADE_ALL_SSTABLE_OPT.left);
+                    try { probe.upgradeSSTables(keyspace, excludeCurrentVersion, columnFamilies); }
                     catch (ExecutionException ee) { err(ee, "Error occurred while upgrading the sstables for keyspace " + keyspace); }
+                    break;
+                case ENABLEAUTOCOMPACTION:
+                    probe.enableAutoCompaction(keyspace, columnFamilies);
+                    break;
+                case DISABLEAUTOCOMPACTION:
+                    probe.disableAutoCompaction(keyspace, columnFamilies);
                     break;
                 default:
                     throw new RuntimeException("Unreachable code.");

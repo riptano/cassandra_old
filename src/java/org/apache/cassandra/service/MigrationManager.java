@@ -24,13 +24,13 @@ import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
 
+import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -114,6 +114,9 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
     {
         // Can't request migrations from nodes with versions younger than 1.1.7
         if (MessagingService.instance().getVersion(endpoint) < MessagingService.VERSION_117)
+            return;
+
+        if (Gossiper.instance.isFatClient(endpoint))
             return;
 
         if (Schema.instance.getVersion().equals(theirVersion))
@@ -219,7 +222,7 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
         if (ksm == null)
             throw new ConfigurationException(String.format("Cannot add column family '%s' to non existing keyspace '%s'.", cfm.cfName, cfm.ksName));
         else if (ksm.cfMetaData().containsKey(cfm.cfName))
-            throw new AlreadyExistsException(cfm.cfName, cfm.ksName);
+            throw new AlreadyExistsException(cfm.ksName, cfm.cfName);
 
         logger.info(String.format("Create new ColumnFamily: %s", cfm));
         announce(cfm.toSchema(FBUtilities.timestampMicros()));
@@ -237,7 +240,7 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
         announce(oldKsm.toSchemaUpdate(ksm, FBUtilities.timestampMicros()));
     }
 
-    public static void announceColumnFamilyUpdate(CFMetaData cfm) throws ConfigurationException
+    public static void announceColumnFamilyUpdate(CFMetaData cfm, boolean fromThrift) throws ConfigurationException
     {
         cfm.validate();
 
@@ -248,7 +251,7 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
         oldCfm.validateCompatility(cfm);
 
         logger.info(String.format("Update ColumnFamily '%s/%s' From %s To %s", cfm.ksName, cfm.cfName, oldCfm, cfm));
-        announce(oldCfm.toSchemaUpdate(cfm, FBUtilities.timestampMicros()));
+        announce(oldCfm.toSchemaUpdate(cfm, FBUtilities.timestampMicros(), fromThrift));
     }
 
     public static void announceKeyspaceDrop(String ksName) throws ConfigurationException
@@ -304,8 +307,8 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
             if (endpoint.equals(FBUtilities.getBroadcastAddress()))
                 continue; // we've delt with localhost already
 
-            // don't send migrations to the nodes with the versions older than < 1.1
-            if (MessagingService.instance().getVersion(endpoint) < MessagingService.VERSION_11)
+            // don't send migrations to the nodes with the versions older than < 1.2
+            if (MessagingService.instance().getVersion(endpoint) < MessagingService.VERSION_12)
                 continue;
 
             pushSchemaMutation(endpoint, schema);
@@ -335,53 +338,39 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
     {
         logger.info("Starting local schema reset...");
 
-        try
+        if (logger.isDebugEnabled())
+            logger.debug("Truncating schema tables...");
+
+        // truncate schema tables
+        SystemTable.schemaCFS(SystemTable.SCHEMA_KEYSPACES_CF).truncateBlocking();
+        SystemTable.schemaCFS(SystemTable.SCHEMA_COLUMNFAMILIES_CF).truncateBlocking();
+        SystemTable.schemaCFS(SystemTable.SCHEMA_COLUMNS_CF).truncateBlocking();
+
+        if (logger.isDebugEnabled())
+            logger.debug("Clearing local schema keyspace definitions...");
+
+        Schema.instance.clear();
+
+        Set<InetAddress> liveEndpoints = Gossiper.instance.getLiveMembers();
+        liveEndpoints.remove(FBUtilities.getBroadcastAddress());
+
+        // force migration is there are nodes around, first of all
+        // check if there are nodes with versions >= 1.1.7 to request migrations from,
+        // because migration format of the nodes with versions < 1.1 is incompatible with older versions
+        // and due to broken timestamps in versions prior to 1.1.7
+        for (InetAddress node : liveEndpoints)
         {
-            if (logger.isDebugEnabled())
-                logger.debug("Truncating schema tables...");
-
-            // truncate schema tables
-            FBUtilities.waitOnFutures(new ArrayList<Future<?>>(3)
-            {{
-                SystemTable.schemaCFS(SystemTable.SCHEMA_KEYSPACES_CF).truncate();
-                SystemTable.schemaCFS(SystemTable.SCHEMA_COLUMNFAMILIES_CF).truncate();
-                SystemTable.schemaCFS(SystemTable.SCHEMA_COLUMNS_CF).truncate();
-            }});
-
-            if (logger.isDebugEnabled())
-                logger.debug("Clearing local schema keyspace definitions...");
-
-            Schema.instance.clear();
-
-            Set<InetAddress> liveEndpoints = Gossiper.instance.getLiveMembers();
-            liveEndpoints.remove(FBUtilities.getBroadcastAddress());
-
-            // force migration is there are nodes around, first of all
-            // check if there are nodes with versions >= 1.1.7 to request migrations from,
-            // because migration format of the nodes with versions < 1.1 is incompatible with older versions
-            // and due to broken timestamps in versions prior to 1.1.7
-            for (InetAddress node : liveEndpoints)
+            if (MessagingService.instance().getVersion(node) >= MessagingService.VERSION_117)
             {
-                if (MessagingService.instance().getVersion(node) >= MessagingService.VERSION_117)
-                {
-                    if (logger.isDebugEnabled())
-                        logger.debug("Requesting schema from " + node);
+                if (logger.isDebugEnabled())
+                    logger.debug("Requesting schema from " + node);
 
-                    FBUtilities.waitOnFuture(StageManager.getStage(Stage.MIGRATION).submit(new MigrationTask(node)));
-                    break;
-                }
+                FBUtilities.waitOnFuture(StageManager.getStage(Stage.MIGRATION).submit(new MigrationTask(node)));
+                break;
             }
+        }
 
-            logger.info("Local schema reset is complete.");
-        }
-        catch (InterruptedException e)
-        {
-            throw new RuntimeException(e);
-        }
-        catch (ExecutionException e)
-        {
-            throw new RuntimeException(e);
-        }
+        logger.info("Local schema reset is complete.");
     }
 
     /**
@@ -396,7 +385,7 @@ public class MigrationManager implements IEndpointStateChangeSubscriber
         ColumnFamilyStore cfStore = defs.getColumnFamilyStore(DefsTable.OLD_SCHEMA_CF);
         QueryFilter filter = QueryFilter.getNamesFilter(dkey, DefsTable.OLD_SCHEMA_CF, LAST_MIGRATION_KEY);
         ColumnFamily cf = cfStore.getColumnFamily(filter);
-        if (cf == null || cf.getColumnNames().size() == 0)
+        if (cf == null || Iterables.isEmpty(cf.getColumnNames()))
             return null;
         else
             return UUIDGen.getUUID(cf.getColumn(LAST_MIGRATION_KEY).value());

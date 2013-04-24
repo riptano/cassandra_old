@@ -71,7 +71,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
         super(rows.get(0).getKey());
         this.rows = rows;
         this.controller = controller;
-        indexer = controller.cfs.indexManager.updaterFor(key, false);
+        indexer = controller.cfs.indexManager.updaterFor(key);
 
         long maxDelTimestamp = Long.MIN_VALUE;
         for (OnDiskAtomIterator row : rows)
@@ -99,6 +99,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
         columnStats = new ColumnStats(reducer == null ? 0 : reducer.columns, 
                                       reducer == null ? Long.MAX_VALUE : reducer.minTimestampSeen, 
                                       reducer == null ? maxDelTimestamp : Math.max(maxDelTimestamp, reducer.maxTimestampSeen),
+                                      reducer == null ? Integer.MIN_VALUE : reducer.maxLocalDeletionTimeSeen,
                                       reducer == null ? new StreamingHistogram(SSTable.TOMBSTONE_HISTOGRAM_BIN_SIZE) : reducer.tombstones
         );
         columnSerializedSize = reducer == null ? 0 : reducer.serializedSize;
@@ -107,7 +108,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
 
     private void indexAndWrite(DataOutput out) throws IOException
     {
-        this.indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.key, getEstimatedColumnCount(), out);
+        this.indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.key, out);
         this.columnsIndex = indexBuilder.build(this);
     }
 
@@ -233,7 +234,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
     {
         // all columns reduced together will have the same name, so there will only be one column
         // in the container; we just want to leverage the conflict resolution code from CF
-        ColumnFamily container = emptyColumnFamily.cloneMeShallow();
+        ColumnFamily container = emptyColumnFamily.cloneMeShallow(ArrayBackedSortedColumns.factory, false);
 
         // tombstone reference; will be reconciled w/ column during getReduced
         RangeTombstone tombstone;
@@ -242,6 +243,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
         int columns = 0;
         long minTimestampSeen = Long.MAX_VALUE;
         long maxTimestampSeen = Long.MIN_VALUE;
+        int maxLocalDeletionTimeSeen = Integer.MIN_VALUE;
         StreamingHistogram tombstones = new StreamingHistogram(SSTable.TOMBSTONE_HISTOGRAM_BIN_SIZE);
 
         public void reduce(OnDiskAtom current)
@@ -254,8 +256,12 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
             {
                 Column column = (Column) current;
                 container.addColumn(column);
-                if (container.getColumn(column.name()) != column)
+                if (indexer != SecondaryIndexManager.nullUpdater
+                    && !column.isMarkedForDelete()
+                    && container.getColumn(column.name()) != column)
+                {
                     indexer.remove(column);
+                }
             }
         }
 
@@ -297,6 +303,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
                 columns++;
                 minTimestampSeen = Math.min(minTimestampSeen, reduced.minTimestamp());
                 maxTimestampSeen = Math.max(maxTimestampSeen, reduced.maxTimestamp());
+                maxLocalDeletionTimeSeen = Math.max(maxLocalDeletionTimeSeen, reduced.getLocalDeletionTime());
                 int deletionTime = reduced.getLocalDeletionTime();
                 if (deletionTime < Integer.MAX_VALUE)
                 {

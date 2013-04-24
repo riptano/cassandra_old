@@ -77,12 +77,12 @@ public class OutboundTcpConnection extends Thread
         return remoteDC.equals(localDC);
     }
 
-    public void enqueue(MessageOut<?> message, String id)
+    public void enqueue(MessageOut<?> message, int id)
     {
         expireMessages();
         try
         {
-            backlog.put(new QueuedMessage(message, id, System.currentTimeMillis()));
+            backlog.put(new QueuedMessage(message, id));
         }
         catch (InterruptedException e)
         {
@@ -95,12 +95,12 @@ public class OutboundTcpConnection extends Thread
         active.clear();
         backlog.clear();
         isStopped = destroyThread; // Exit loop to stop the thread
-        enqueue(CLOSE_SENTINEL, null);
+        enqueue(CLOSE_SENTINEL, -1);
     }
 
     void softCloseSocket()
     {
-        enqueue(CLOSE_SENTINEL, null);
+        enqueue(CLOSE_SENTINEL, -1);
     }
 
     public int getTargetVersion()
@@ -183,42 +183,64 @@ public class OutboundTcpConnection extends Thread
                 Tracing.instance().stopIfNonLocal(state);
             }
 
-            write(qm.message, qm.id, qm.timestamp, out, targetVersion);
+            writeInternal(qm.message, qm.id, qm.timestamp);
+
             completed++;
             if (active.peek() == null)
-            {
                 out.flush();
-            }
         }
         catch (Exception e)
         {
-            // Non IO exceptions is likely a programming error so let's not silence it
-            if (!(e instanceof IOException))
-                logger.error("error writing to " + poolReference.endPoint(), e);
-            else if (logger.isDebugEnabled())
-                logger.debug("error writing to " + poolReference.endPoint(), e);
             disconnect();
+            if (e instanceof IOException)
+            {
+                if (logger.isDebugEnabled())
+                    logger.debug("error writing to " + poolReference.endPoint(), e);
+
+                // if the message was important, such as a repair acknowledgement, put it back on the queue
+                // to retry after re-connecting.  See CASSANDRA-5393
+                if (e instanceof SocketException && qm.shouldRetry())
+                {
+                    try
+                    {
+                        backlog.put(new RetriedQueuedMessage(qm));
+                    }
+                    catch (InterruptedException e1)
+                    {
+                        throw new AssertionError(e1);
+                    }
+                }
+            }
+            else
+            {
+                // Non IO exceptions are likely a programming error so let's not silence them
+                logger.error("error writing to " + poolReference.endPoint(), e);
+            }
         }
     }
 
-    public static void write(MessageOut message, String id, long timestamp, DataOutputStream out, int version) throws IOException
+    private void writeInternal(MessageOut message, int id, long timestamp) throws IOException
     {
         out.writeInt(MessagingService.PROTOCOL_MAGIC);
-        if (version < MessagingService.VERSION_12)
+        if (targetVersion < MessagingService.VERSION_12)
         {
-            writeHeader(out, version, false);
+            writeHeader(out, targetVersion, false);
             // 0.8 included a total message size int.  1.0 doesn't need it but expects it to be there.
             out.writeInt(-1);
         }
 
-        out.writeUTF(id);
-        if (version >= MessagingService.VERSION_12)
+        if (targetVersion < MessagingService.VERSION_20)
+            out.writeUTF(String.valueOf(id));
+        else
+            out.writeInt(id);
+
+        if (targetVersion >= MessagingService.VERSION_12)
         {
             // int cast cuts off the high-order half of the timestamp, which we can assume remains
             // the same between now and when the recipient reconstructs it.
             out.writeInt((int) timestamp);
         }
-        message.serialize(out, version);
+        message.serialize(out, targetVersion);
     }
 
     private static void writeHeader(DataOutputStream out, int version, boolean compressionEnabled) throws IOException
@@ -280,7 +302,7 @@ public class OutboundTcpConnection extends Thread
                 {
                     try
                     {
-                        socket.setSendBufferSize(DatabaseDescriptor.getInternodeSendBufferSize().intValue());
+                        socket.setSendBufferSize(DatabaseDescriptor.getInternodeSendBufferSize());
                     }
                     catch (SocketException se)
                     {
@@ -366,17 +388,36 @@ public class OutboundTcpConnection extends Thread
         }
     }
 
+    /** messages that have not been retried yet */
     private static class QueuedMessage
     {
         final MessageOut<?> message;
-        final String id;
+        final int id;
         final long timestamp;
 
-        QueuedMessage(MessageOut<?> message, String id, long timestamp)
+        QueuedMessage(MessageOut<?> message, int id)
         {
             this.message = message;
             this.id = id;
-            this.timestamp = timestamp;
+            this.timestamp = System.currentTimeMillis();
+        }
+
+        boolean shouldRetry()
+        {
+            return !MessagingService.DROPPABLE_VERBS.contains(message.verb);
+        }
+    }
+
+    private static class RetriedQueuedMessage extends QueuedMessage
+    {
+        RetriedQueuedMessage(QueuedMessage msg)
+        {
+            super(msg.message, msg.id);
+        }
+
+        boolean shouldRetry()
+        {
+            return false;
         }
     }
 }

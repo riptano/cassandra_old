@@ -20,8 +20,6 @@ package org.apache.cassandra.db;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -180,7 +178,7 @@ public class DefsTable
             if (Schema.invalidSchemaRow(row))
                 continue;
 
-            for (Column column : row.cf.columns)
+            for (Column column : row.cf)
             {
                 Date columnDate = new Date(column.timestamp());
 
@@ -210,21 +208,9 @@ public class DefsTable
 
         logger.info("Fixing timestamps of schema ColumnFamily " + columnFamily + "...");
 
-        try
-        {
-            cfs.truncate().get();
-        }
-        catch (ExecutionException e)
-        {
-            throw new RuntimeException(e);
-        }
-        catch (InterruptedException e)
-        {
-            throw new AssertionError(e);
-        }
+        cfs.truncateBlocking();
 
         long microTimestamp = now.getTime() * 1000;
-
         for (Row row : rows)
         {
             if (Schema.invalidSchemaRow(row))
@@ -232,7 +218,7 @@ public class DefsTable
 
             RowMutation mutation = new RowMutation(Table.SYSTEM_KS, row.key.key);
 
-            for (Column column : row.cf.columns)
+            for (Column column : row.cf)
             {
                 if (column.isLive())
                     mutation.add(columnFamily, column.name(), column.value(), microTimestamp);
@@ -241,18 +227,7 @@ public class DefsTable
             mutation.apply();
         }
         // flush immediately because we read schema before replaying the commitlog
-        try
-        {
-            cfs.forceBlockingFlush();
-        }
-        catch (ExecutionException e)
-        {
-            throw new RuntimeException("Could not flush after fixing schema timestamps", e);
-        }
-        catch (InterruptedException e)
-        {
-            throw new AssertionError(e);
-        }
+        cfs.forceBlockingFlush();
     }
 
     public static ByteBuffer searchComposite(String name, boolean start)
@@ -300,10 +275,9 @@ public class DefsTable
             org.apache.avro.Schema schema = org.apache.avro.Schema.parse(ByteBufferUtil.string(value));
 
             // deserialize keyspaces using schema
-            Collection<Column> columns = cf.getSortedColumns();
-            keyspaces = new ArrayList<KSMetaData>(columns.size());
+            keyspaces = new ArrayList<KSMetaData>(Iterables.size(cf));
 
-            for (Column column : columns)
+            for (Column column : cf)
             {
                 if (column.name().equals(DEFINITION_SCHEMA_COLUMN_NAME))
                     continue;
@@ -313,6 +287,8 @@ public class DefsTable
 
             // store deserialized keyspaces into new place
             save(keyspaces);
+
+            flushSchemaCFs();
 
             logger.info("Truncating deprecated system column families (migrations, schema)...");
             dropColumnFamily(Table.SYSTEM_KS, OLD_MIGRATIONS_CF);
@@ -371,7 +347,7 @@ public class DefsTable
             ColumnFamily ksAttrs = entry.getValue();
 
             // we don't care about nested ColumnFamilies here because those are going to be processed separately
-            if (!ksAttrs.isEmpty())
+            if (!(ksAttrs.getColumnCount() == 0))
                 addKeyspace(KSMetaData.fromSchema(new Row(entry.getKey(), entry.getValue()), Collections.<CFMetaData>emptyList()));
         }
 
@@ -391,7 +367,7 @@ public class DefsTable
             ColumnFamily prevValue = entry.getValue().leftValue();
             ColumnFamily newValue = entry.getValue().rightValue();
 
-            if (prevValue.isEmpty())
+            if (prevValue.getColumnCount() == 0)
             {
                 addKeyspace(KSMetaData.fromSchema(new Row(entry.getKey(), newValue), Collections.<CFMetaData>emptyList()));
                 continue;
@@ -415,7 +391,7 @@ public class DefsTable
 
             ColumnFamily newState = valueDiff.rightValue();
 
-            if (newState.isEmpty())
+            if (newState.getColumnCount() == 0)
                 keyspacesToDrop.add(AsciiType.instance.getString(key.key));
             else
                 updateKeyspace(KSMetaData.fromSchema(new Row(key, newState), Collections.<CFMetaData>emptyList()));
@@ -435,7 +411,7 @@ public class DefsTable
         {
             ColumnFamily cfAttrs = entry.getValue();
 
-            if (!cfAttrs.isEmpty())
+            if (!(cfAttrs.getColumnCount() == 0))
             {
                Map<String, CFMetaData> cfDefs = KSMetaData.deserializeColumnFamilies(new Row(entry.getKey(), cfAttrs));
 
@@ -456,12 +432,12 @@ public class DefsTable
 
             Row newRow = new Row(keyspace, newValue);
 
-            if (prevValue.isEmpty()) // whole keyspace was deleted and now it's re-created
+            if (prevValue.getColumnCount() == 0) // whole keyspace was deleted and now it's re-created
             {
                 for (CFMetaData cfm : KSMetaData.deserializeColumnFamilies(newRow).values())
                     addColumnFamily(cfm);
             }
-            else if (newValue.isEmpty()) // whole keyspace is deleted
+            else if (newValue.getColumnCount() == 0) // whole keyspace is deleted
             {
                 for (CFMetaData cfm : KSMetaData.deserializeColumnFamilies(new Row(keyspace, prevValue)).values())
                     dropColumnFamily(cfm.ksName, cfm.cfName);
@@ -557,7 +533,7 @@ public class DefsTable
         KSMetaData ksm = Schema.instance.getKSMetaData(ksName);
         String snapshotName = Table.getTimestampedSnapshotName(ksName);
 
-        CompactionManager.instance.stopCompactionFor(ksm.cfMetaData().values());
+        CompactionManager.instance.interruptCompactionFor(ksm.cfMetaData().values(), true);
 
         // remove all cfs from the table instance.
         for (CFMetaData cfm : ksm.cfMetaData().values())
@@ -596,7 +572,7 @@ public class DefsTable
         Schema.instance.purge(cfm);
         Schema.instance.setTableDefinition(makeNewKeyspaceDefinition(ksm, cfm));
 
-        CompactionManager.instance.stopCompactionFor(Arrays.asList(cfm));
+        CompactionManager.instance.interruptCompactionFor(Arrays.asList(cfm), true);
 
         if (!StorageService.instance.isClientMode())
         {

@@ -24,7 +24,6 @@ import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 
@@ -44,19 +43,14 @@ public class Column implements OnDiskAtom
 {
     public static final int MAX_NAME_LENGTH = FBUtilities.MAX_UNSIGNED_SHORT;
 
-    private static final ColumnSerializer serializer = new ColumnSerializer();
-
-    public static ColumnSerializer serializer()
-    {
-        return serializer;
-    }
+    public static final ColumnSerializer serializer = new ColumnSerializer();
 
     public static OnDiskAtom.Serializer onDiskSerializer()
     {
         return OnDiskAtom.Serializer.instance;
     }
 
-    public static Iterator<OnDiskAtom> onDiskIterator(final DataInput dis, final int count, final ColumnSerializer.Flag flag, final int expireBefore, final Descriptor.Version version)
+    public static Iterator<OnDiskAtom> onDiskIterator(final DataInput in, final int count, final ColumnSerializer.Flag flag, final int expireBefore, final Descriptor.Version version)
     {
         return new Iterator<OnDiskAtom>()
         {
@@ -72,7 +66,7 @@ public class Column implements OnDiskAtom
                 ++i;
                 try
                 {
-                    return onDiskSerializer().deserializeFromSSTable(dis, flag, expireBefore, version);
+                    return onDiskSerializer().deserializeFromSSTable(in, flag, expireBefore, version);
                 }
                 catch (IOException e)
                 {

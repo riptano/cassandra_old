@@ -180,7 +180,7 @@ public class UpdateStatement extends ModificationStatement
             {
                 for (Term t : values)
                 {
-                    ByteBuffer val = values.get(0).bindAndGet(variables);
+                    ByteBuffer val = t.bindAndGet(variables);
                     if (val == null)
                         throw new InvalidRequestException(String.format("Invalid null value for partition key part %s", name));
                     keys.add(keyBuilder.copy().add(val).build());
@@ -212,7 +212,7 @@ public class UpdateStatement extends ModificationStatement
         validateKey(key);
 
         QueryProcessor.validateKey(key);
-        ColumnFamily cf = ColumnFamily.create(Schema.instance.getCFMetaData(cfDef.cfm.ksName, cfDef.cfm.cfName));
+        ColumnFamily cf = UnsortedColumns.factory.create(Schema.instance.getCFMetaData(cfDef.cfm.ksName, cfDef.cfm.cfName));
 
         // Inserting the CQL row marker (see #4361)
         // We always need to insert a marker, because of the following situation:

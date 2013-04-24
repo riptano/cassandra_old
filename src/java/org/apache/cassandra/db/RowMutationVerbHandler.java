@@ -32,7 +32,7 @@ public class RowMutationVerbHandler implements IVerbHandler<RowMutation>
 {
     private static final Logger logger = LoggerFactory.getLogger(RowMutationVerbHandler.class);
 
-    public void doVerb(MessageIn<RowMutation> message, String id)
+    public void doVerb(MessageIn<RowMutation> message, int id)
     {
         try
         {
@@ -70,16 +70,16 @@ public class RowMutationVerbHandler implements IVerbHandler<RowMutation>
      */
     private void forwardToLocalNodes(RowMutation rm, MessagingService.Verb verb, byte[] forwardBytes, InetAddress from) throws IOException
     {
-        DataInputStream dis = new DataInputStream(new FastByteArrayInputStream(forwardBytes));
-        int size = dis.readInt();
+        DataInputStream in = new DataInputStream(new FastByteArrayInputStream(forwardBytes));
+        int size = in.readInt();
 
         // remove fwds from message to avoid infinite loop
         MessageOut<RowMutation> message = new MessageOut<RowMutation>(verb, rm, RowMutation.serializer).withParameter(RowMutation.FORWARD_FROM, from.getAddress());
         for (int i = 0; i < size; i++)
         {
             // Send a message to each of the addresses on our Forward List
-            InetAddress address = CompactEndpointSerializationHelper.deserialize(dis);
-            String id = dis.readUTF();
+            InetAddress address = CompactEndpointSerializationHelper.deserialize(in);
+            int id = in.readInt();
             logger.debug("Forwarding message to {}@{}", id, address);
             // Let the response go back to the coordinator
             MessagingService.instance().sendOneWay(message, id, address);

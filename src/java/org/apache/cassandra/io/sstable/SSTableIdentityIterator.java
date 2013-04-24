@@ -122,11 +122,11 @@ public class SSTableIdentityIterator implements Comparable<SSTableIdentityIterat
                 if (dataStart + dataSize > file.length())
                     throw new IOException(String.format("dataSize of %s starting at %s would be larger than file %s length %s",
                                           dataSize, dataStart, file.getPath(), file.length()));
-                if (checkData && !sstable.descriptor.version.hasPromotedIndexes)
+                if (checkData && !dataVersion.hasPromotedIndexes)
                 {
                     try
                     {
-                        IndexHelper.defreezeBloomFilter(file, dataSize, sstable.descriptor.version.filterType);
+                        IndexHelper.skipBloomFilter(file);
                     }
                     catch (Exception e)
                     {
@@ -135,10 +135,9 @@ public class SSTableIdentityIterator implements Comparable<SSTableIdentityIterat
 
                         logger.debug("Invalid bloom filter in {}; will rebuild it", sstable);
                     }
-
                     try
                     {
-                        // deFreeze should have left the file position ready to deserialize index
+                        // skipping the old row-level BF should have left the file position ready to deserialize index
                         IndexHelper.deserializeIndex(file);
                     }
                     catch (Exception e)
@@ -150,12 +149,12 @@ public class SSTableIdentityIterator implements Comparable<SSTableIdentityIterat
                 }
             }
 
-            if (sstable != null && !sstable.descriptor.version.hasPromotedIndexes)
+            if (sstable != null && !dataVersion.hasPromotedIndexes)
             {
                 IndexHelper.skipBloomFilter(inputWithTracker);
                 IndexHelper.skipIndex(inputWithTracker);
             }
-            columnFamily = ColumnFamily.create(metadata);
+            columnFamily = EmptyColumns.factory.create(metadata);
             columnFamily.delete(DeletionInfo.serializer().deserializeFromSSTable(inputWithTracker, dataVersion));
 
             columnCount = inputWithTracker.readInt();
@@ -231,7 +230,7 @@ public class SSTableIdentityIterator implements Comparable<SSTableIdentityIterat
         }
     }
 
-    public ColumnFamily getColumnFamilyWithColumns(ISortedColumns.Factory containerFactory) throws IOException
+    public ColumnFamily getColumnFamilyWithColumns(ColumnFamily.Factory containerFactory) throws IOException
     {
         assert inputWithTracker.getBytesRead() == headerSize();
         ColumnFamily cf = columnFamily.cloneMeShallow(containerFactory, false);
@@ -241,7 +240,7 @@ public class SSTableIdentityIterator implements Comparable<SSTableIdentityIterat
         {
             try
             {
-                cf.validateColumnFields();
+                cf.metadata().validateColumns(cf);
             }
             catch (MarshalException e)
             {

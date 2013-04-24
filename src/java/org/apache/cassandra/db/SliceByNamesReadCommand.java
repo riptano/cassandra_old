@@ -19,7 +19,6 @@ package org.apache.cassandra.db;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.util.*;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
@@ -50,7 +49,7 @@ public class SliceByNamesReadCommand extends ReadCommand
         return readCommand;
     }
 
-    public Row getRow(Table table) throws IOException
+    public Row getRow(Table table)
     {
         DecoratedKey dk = StorageService.getPartitioner().decorateKey(key);
         return table.getRow(new QueryFilter(dk, cfName, filter));
@@ -75,43 +74,43 @@ public class SliceByNamesReadCommand extends ReadCommand
 
 class SliceByNamesReadCommandSerializer implements IVersionedSerializer<ReadCommand>
 {
-    public void serialize(ReadCommand cmd, DataOutput dos, int version) throws IOException
+    public void serialize(ReadCommand cmd, DataOutput out, int version) throws IOException
     {
-        serialize(cmd, null, dos, version);
+        serialize(cmd, null, out, version);
     }
 
-    public void serialize(ReadCommand cmd, ByteBuffer superColumn, DataOutput dos, int version) throws IOException
+    public void serialize(ReadCommand cmd, ByteBuffer superColumn, DataOutput out, int version) throws IOException
     {
         SliceByNamesReadCommand command = (SliceByNamesReadCommand) cmd;
-        dos.writeBoolean(command.isDigestQuery());
-        dos.writeUTF(command.table);
-        ByteBufferUtil.writeWithShortLength(command.key, dos);
+        out.writeBoolean(command.isDigestQuery());
+        out.writeUTF(command.table);
+        ByteBufferUtil.writeWithShortLength(command.key, out);
 
         if (version < MessagingService.VERSION_20)
-            new QueryPath(command.cfName, superColumn).serialize(dos);
+            new QueryPath(command.cfName, superColumn).serialize(out);
         else
-            dos.writeUTF(command.cfName);
+            out.writeUTF(command.cfName);
 
-        NamesQueryFilter.serializer.serialize(command.filter, dos, version);
+        NamesQueryFilter.serializer.serialize(command.filter, out, version);
     }
 
-    public ReadCommand deserialize(DataInput dis, int version) throws IOException
+    public ReadCommand deserialize(DataInput in, int version) throws IOException
     {
-        boolean isDigest = dis.readBoolean();
-        String table = dis.readUTF();
-        ByteBuffer key = ByteBufferUtil.readWithShortLength(dis);
+        boolean isDigest = in.readBoolean();
+        String table = in.readUTF();
+        ByteBuffer key = ByteBufferUtil.readWithShortLength(in);
 
         String cfName;
         ByteBuffer sc = null;
         if (version < MessagingService.VERSION_20)
         {
-            QueryPath path = QueryPath.deserialize(dis);
+            QueryPath path = QueryPath.deserialize(in);
             cfName = path.columnFamilyName;
             sc = path.superColumnName;
         }
         else
         {
-            cfName = dis.readUTF();
+            cfName = in.readUTF();
         }
 
         CFMetaData metadata = Schema.instance.getCFMetaData(table, cfName);
@@ -129,7 +128,7 @@ class SliceByNamesReadCommandSerializer implements IVersionedSerializer<ReadComm
                 comparator = metadata.comparator;
             }
 
-            IDiskAtomFilter filter = NamesQueryFilter.serializer.deserialize(dis, version, comparator);
+            IDiskAtomFilter filter = NamesQueryFilter.serializer.deserialize(in, version, comparator);
 
             if (metadata.cfType == ColumnFamilyType.Super)
                 filter = SuperColumns.fromSCFilter((CompositeType)metadata.comparator, sc, filter);
@@ -142,7 +141,7 @@ class SliceByNamesReadCommandSerializer implements IVersionedSerializer<ReadComm
         }
         else
         {
-            NamesQueryFilter filter = NamesQueryFilter.serializer.deserialize(dis, version, metadata.comparator);
+            NamesQueryFilter filter = NamesQueryFilter.serializer.deserialize(in, version, metadata.comparator);
             command = new SliceByNamesReadCommand(table, key, cfName, filter);
         }
 

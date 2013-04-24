@@ -28,6 +28,8 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.UUID;
 
+import com.google.common.collect.Iterables;
+
 import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.net.MessageOut;
@@ -74,7 +76,7 @@ public class CounterMutation implements IMutation
         return consistency;
     }
 
-    public RowMutation makeReplicationMutation() throws IOException
+    public RowMutation makeReplicationMutation()
     {
         List<ReadCommand> readCommands = new LinkedList<ReadCommand>();
         for (ColumnFamily columnFamily : rowMutation.getColumnFamilies())
@@ -101,8 +103,8 @@ public class CounterMutation implements IMutation
 
     private void addReadCommandFromColumnFamily(String table, ByteBuffer key, ColumnFamily columnFamily, List<ReadCommand> commands)
     {
-        SortedSet s = new TreeSet<ByteBuffer>(columnFamily.metadata().comparator);
-        s.addAll(columnFamily.getColumnNames());
+        SortedSet<ByteBuffer> s = new TreeSet<ByteBuffer>(columnFamily.metadata().comparator);
+        Iterables.addAll(s, columnFamily.getColumnNames());
         commands.add(new SliceByNamesReadCommand(table, key, columnFamily.metadata().cfName, new NamesQueryFilter(s)));
     }
 
@@ -164,16 +166,16 @@ public class CounterMutation implements IMutation
 
 class CounterMutationSerializer implements IVersionedSerializer<CounterMutation>
 {
-    public void serialize(CounterMutation cm, DataOutput dos, int version) throws IOException
+    public void serialize(CounterMutation cm, DataOutput out, int version) throws IOException
     {
-        RowMutation.serializer.serialize(cm.rowMutation(), dos, version);
-        dos.writeUTF(cm.consistency().name());
+        RowMutation.serializer.serialize(cm.rowMutation(), out, version);
+        out.writeUTF(cm.consistency().name());
     }
 
-    public CounterMutation deserialize(DataInput dis, int version) throws IOException
+    public CounterMutation deserialize(DataInput in, int version) throws IOException
     {
-        RowMutation rm = RowMutation.serializer.deserialize(dis, version);
-        ConsistencyLevel consistency = Enum.valueOf(ConsistencyLevel.class, dis.readUTF());
+        RowMutation rm = RowMutation.serializer.deserialize(in, version);
+        ConsistencyLevel consistency = Enum.valueOf(ConsistencyLevel.class, in.readUTF());
         return new CounterMutation(rm, consistency);
     }
 

@@ -17,18 +17,21 @@
  */
 package org.apache.cassandra.db.filter;
 
-import java.io.*;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.Iterator;
 
-import com.google.common.collect.AbstractIterator;
-import com.google.common.collect.Lists;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.*;
-import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.columniterator.ISSTableColumnIterator;
+import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.columniterator.SSTableSliceIterator;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.CompositeType;
@@ -142,7 +145,7 @@ public class SliceQueryFilter implements IDiskAtomFilter
                 container.addColumn(column);
         }
 
-        Tracing.trace("Read {} live cells and {} tombstoned", columnCounter.live(), columnCounter.ignored());
+        Tracing.trace("Read {} live and {} tombstoned cells", columnCounter.live(), columnCounter.ignored());
     }
 
     public int getLiveCount(ColumnFamily cf)
@@ -168,34 +171,24 @@ public class SliceQueryFilter implements IDiskAtomFilter
     {
         ColumnCounter counter = getColumnCounter(cf);
 
-        Collection<ByteBuffer> toRemove = null;
-        boolean trimRemaining = false;
-
         Collection<Column> columns = reversed
                                    ? cf.getReverseSortedColumns()
                                    : cf.getSortedColumns();
 
-        for (Column column : columns)
+        for (Iterator<Column> iter = columns.iterator(); iter.hasNext(); )
         {
-            if (trimRemaining)
-            {
-                toRemove.add(column.name());
-                continue;
-            }
-
+            Column column = iter.next();
             counter.count(column, cf);
+
             if (counter.live() > trimTo)
             {
-                toRemove = new HashSet<ByteBuffer>();
-                toRemove.add(column.name());
-                trimRemaining = true;
+                iter.remove();
+                while (iter.hasNext())
+                {
+                    iter.next();
+                    iter.remove();
+                }
             }
-        }
-
-        if (toRemove != null)
-        {
-            for (ByteBuffer columnName : toRemove)
-                cf.remove(columnName);
         }
     }
 
@@ -236,60 +229,60 @@ public class SliceQueryFilter implements IDiskAtomFilter
         count = newLimit;
     }
 
-    public boolean includes(Comparator<ByteBuffer> cmp, ByteBuffer name)
+    public boolean maySelectPrefix(Comparator<ByteBuffer> cmp, ByteBuffer prefix)
     {
         for (ColumnSlice slice : slices)
-            if (slice.includes(cmp, name))
+            if (slice.includes(cmp, prefix))
                 return true;
         return false;
     }
 
     public static class Serializer implements IVersionedSerializer<SliceQueryFilter>
     {
-        public void serialize(SliceQueryFilter f, DataOutput dos, int version) throws IOException
+        public void serialize(SliceQueryFilter f, DataOutput out, int version) throws IOException
         {
             if (version < MessagingService.VERSION_12)
             {
                 // It's kind of lame, but probably better than throwing an exception
                 ColumnSlice slice = new ColumnSlice(f.start(), f.finish());
-                ColumnSlice.serializer.serialize(slice, dos, version);
+                ColumnSlice.serializer.serialize(slice, out, version);
             }
             else
             {
-                dos.writeInt(f.slices.length);
+                out.writeInt(f.slices.length);
                 for (ColumnSlice slice : f.slices)
-                    ColumnSlice.serializer.serialize(slice, dos, version);
+                    ColumnSlice.serializer.serialize(slice, out, version);
             }
-            dos.writeBoolean(f.reversed);
+            out.writeBoolean(f.reversed);
             int count = f.count;
             if (f.compositesToGroup > 0 && version < MessagingService.VERSION_12)
                 count *= f.countMutliplierForCompatibility;
-            dos.writeInt(count);
+            out.writeInt(count);
 
             if (version < MessagingService.VERSION_12)
                 return;
 
-            dos.writeInt(f.compositesToGroup);
+            out.writeInt(f.compositesToGroup);
         }
 
-        public SliceQueryFilter deserialize(DataInput dis, int version) throws IOException
+        public SliceQueryFilter deserialize(DataInput in, int version) throws IOException
         {
             ColumnSlice[] slices;
             if (version < MessagingService.VERSION_12)
             {
-                slices = new ColumnSlice[]{ ColumnSlice.serializer.deserialize(dis, version) };
+                slices = new ColumnSlice[]{ ColumnSlice.serializer.deserialize(in, version) };
             }
             else
             {
-                slices = new ColumnSlice[dis.readInt()];
+                slices = new ColumnSlice[in.readInt()];
                 for (int i = 0; i < slices.length; i++)
-                    slices[i] = ColumnSlice.serializer.deserialize(dis, version);
+                    slices[i] = ColumnSlice.serializer.deserialize(in, version);
             }
-            boolean reversed = dis.readBoolean();
-            int count = dis.readInt();
+            boolean reversed = in.readBoolean();
+            int count = in.readInt();
             int compositesToGroup = -1;
             if (version >= MessagingService.VERSION_12)
-                compositesToGroup = dis.readInt();
+                compositesToGroup = in.readInt();
 
             return new SliceQueryFilter(slices, reversed, count, compositesToGroup, 1);
         }

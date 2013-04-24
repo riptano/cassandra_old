@@ -30,14 +30,14 @@ public class TruncateVerbHandler implements IVerbHandler<Truncation>
 {
     private static final Logger logger = LoggerFactory.getLogger(TruncateVerbHandler.class);
 
-    public void doVerb(MessageIn<Truncation> message, String id)
+    public void doVerb(MessageIn<Truncation> message, int id)
     {
         Truncation t = message.payload;
         Tracing.trace("Applying truncation of {}.{}", t.keyspace, t.columnFamily);
         try
         {
             ColumnFamilyStore cfs = Table.open(t.keyspace).getColumnFamilyStore(t.columnFamily);
-            cfs.truncate().get();
+            cfs.truncateBlocking();
         }
         catch (Exception e)
         {

@@ -26,7 +26,7 @@ public class ResponseVerbHandler implements IVerbHandler
 {
     private static final Logger logger = LoggerFactory.getLogger( ResponseVerbHandler.class );
 
-    public void doVerb(MessageIn message, String id)
+    public void doVerb(MessageIn message, int id)
     {
         long latency = System.currentTimeMillis() - MessagingService.instance().getRegisteredCallbackAge(id);
         CallbackInfo callbackInfo = MessagingService.instance().removeRegisteredCallback(id);
@@ -38,18 +38,9 @@ public class ResponseVerbHandler implements IVerbHandler
             return;
         }
 
-        IMessageCallback cb = callbackInfo.callback;
+        Tracing.trace("Processing response from {}", message.from);
+        IAsyncCallback cb = callbackInfo.callback;
         MessagingService.instance().maybeAddLatency(cb, message.from, latency);
-
-        if (cb instanceof IAsyncCallback)
-        {
-            Tracing.trace("Processing response from {}", message.from);
-            ((IAsyncCallback) cb).response(message);
-        }
-        else
-        {
-            Tracing.trace("Processing result from {}", message.from);
-            ((IAsyncResult) cb).result(message);
-        }
+        cb.response(message);
     }
 }

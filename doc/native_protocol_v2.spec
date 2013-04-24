@@ -1,6 +1,6 @@
 
-                             CQL BINARY PROTOCOL v1
-                                    (draft)
+                             CQL BINARY PROTOCOL v2
+
 
 Table of Contents
 
@@ -36,6 +36,7 @@ Table of Contents
   5. Compression
   6. Collection types
   7. Error codes
+  8. Changes from v1
 
 
 1. Overview
@@ -77,6 +78,7 @@ Table of Contents
   version.
 
 
+
 2. Frame header
 
 2.1. version
@@ -89,8 +91,11 @@ Table of Contents
   The rest of that byte is the protocol version (1 for the protocol defined in
   this document). In other words, for this version of the protocol, version will
   have one of:
-    0x01    Request frame for this protocol version
-    0x81    Response frame for this protocol version
+    0x02    Request frame for this protocol version
+    0x82    Response frame for this protocol version
+
+  This document describe the version 2 of the protocol. For the changes made since
+  version 1, see Section 8.
 
 
 2.2. flags

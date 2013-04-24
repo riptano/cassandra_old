@@ -77,7 +77,6 @@ public class NodeProbe
     public MessagingServiceMBean msProxy;
     private FailureDetectorMBean fdProxy;
     private CacheServiceMBean cacheService;
-    private PBSPredictorMBean PBSPredictorProxy;
     private StorageProxyMBean spProxy;
     private HintedHandOffManagerMBean hhProxy;
     private boolean failed;
@@ -149,8 +148,6 @@ public class NodeProbe
         {
             ObjectName name = new ObjectName(ssObjName);
             ssProxy = JMX.newMBeanProxy(mbeanServerConn, name, StorageServiceMBean.class);
-            name = new ObjectName(PBSPredictor.MBEAN_NAME);
-            PBSPredictorProxy = JMX.newMBeanProxy(mbeanServerConn, name, PBSPredictorMBean.class);
             name = new ObjectName(MessagingService.MBEAN_NAME);
             msProxy = JMX.newMBeanProxy(mbeanServerConn, name, MessagingServiceMBean.class);
             name = new ObjectName(StreamingService.MBEAN_OBJECT_NAME);
@@ -192,9 +189,9 @@ public class NodeProbe
         ssProxy.scrub(tableName, columnFamilies);
     }
 
-    public void upgradeSSTables(String tableName, String... columnFamilies) throws IOException, ExecutionException, InterruptedException
+    public void upgradeSSTables(String tableName, boolean excludeCurrentVersion, String... columnFamilies) throws IOException, ExecutionException, InterruptedException
     {
-        ssProxy.upgradeSSTables(tableName, columnFamilies);
+        ssProxy.upgradeSSTables(tableName, excludeCurrentVersion, columnFamilies);
     }
 
     public void forceTableCompaction(String tableName, String... columnFamilies) throws IOException, ExecutionException, InterruptedException
@@ -520,6 +517,16 @@ public class NodeProbe
         cfsProxy.setCompactionThresholds(minimumCompactionThreshold, maximumCompactionThreshold);
     }
 
+    public void disableAutoCompaction(String ks, String ... columnFamilies) throws IOException
+    {
+        ssProxy.disableAutoCompaction(ks, columnFamilies);
+    }
+
+    public void enableAutoCompaction(String ks, String ... columnFamilies) throws IOException
+    {
+        ssProxy.enableAutoCompaction(ks, columnFamilies);
+    }
+
     public void setCacheCapacities(int keyCacheCapacity, int rowCacheCapacity)
     {
         try
@@ -700,6 +707,21 @@ public class NodeProbe
         hhProxy.pauseHintsDelivery(false);
     }
 
+    public void stopNativeTransport()
+    {
+        ssProxy.stopNativeTransport();
+    }
+
+    public void startNativeTransport()
+    {
+        ssProxy.startNativeTransport();
+    }
+
+    public boolean isNativeTransportRunning()
+    {
+        return ssProxy.isNativeTransportRunning();
+    }
+
     public void stopGossiping()
     {
         ssProxy.stopGossiping();
@@ -788,11 +810,6 @@ public class NodeProbe
     public List<String> describeRing(String keyspaceName) throws IOException
     {
         return ssProxy.describeRingJMX(keyspaceName);
-    }
-
-    public PBSPredictorMBean getPBSPredictorMBean()
-    {
-        return PBSPredictorProxy;
     }
 
     public void rebuild(String sourceDc)
@@ -983,9 +1000,9 @@ class RepairRunner implements NotificationListener
                 String message = String.format("[%s] %s", format.format(notification.getTimeStamp()), notification.getMessage());
                 out.println(message);
                 // repair status is int array with [0] = cmd number, [1] = status
-                if (status[1] == AntiEntropyService.Status.SESSION_FAILED.ordinal())
+                if (status[1] == ActiveRepairService.Status.SESSION_FAILED.ordinal())
                     success = false;
-                else if (status[1] == AntiEntropyService.Status.FINISHED.ordinal())
+                else if (status[1] == ActiveRepairService.Status.FINISHED.ordinal())
                     condition.signalAll();
             }
         }

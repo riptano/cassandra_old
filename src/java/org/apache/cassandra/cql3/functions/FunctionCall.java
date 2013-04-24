@@ -21,7 +21,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.ColumnSpecification;
 import org.apache.cassandra.cql3.Constants;
 import org.apache.cassandra.cql3.Lists;
@@ -132,7 +131,11 @@ public class FunctionCall extends Term.NonTerminal
         public boolean isAssignableTo(ColumnSpecification receiver)
         {
             AbstractType<?> returnType = Functions.getReturnType(functionName, receiver.ksName, receiver.cfName);
-            return receiver.type.equals(returnType);
+            // Note: if returnType == null, it means the function doesn't exist. We may get this if an undefined function
+            // is used as argument of another, existing, function. In that case, we return true here because we'll catch
+            // the fact that the method is undefined latter anyway and with a more helpful error message that if we were
+            // to return false here.
+            return returnType == null || receiver.type.asCQL3Type().equals(returnType.asCQL3Type());
         }
 
         @Override

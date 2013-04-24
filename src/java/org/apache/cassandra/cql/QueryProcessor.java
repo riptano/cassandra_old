@@ -112,14 +112,7 @@ public class QueryProcessor
             }
         }
 
-        try
-        {
-            return StorageProxy.read(commands, select.getConsistencyLevel());
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
+        return StorageProxy.read(commands, select.getConsistencyLevel());
     }
 
     private static SortedSet<ByteBuffer> getColumnNames(SelectStatement select, CFMetaData metadata, List<ByteBuffer> variables)
@@ -140,7 +133,6 @@ public class QueryProcessor
     private static List<org.apache.cassandra.db.Row> multiRangeSlice(CFMetaData metadata, SelectStatement select, List<ByteBuffer> variables)
     throws ReadTimeoutException, UnavailableException, InvalidRequestException
     {
-        List<org.apache.cassandra.db.Row> rows;
         IPartitioner<?> p = StorageService.getPartitioner();
 
         AbstractType<?> keyType = Schema.instance.getCFMetaData(metadata.ksName, select.getColumnFamily()).getKeyValidator();
@@ -183,20 +175,13 @@ public class QueryProcessor
                   ? select.getNumRecords() + 1
                   : select.getNumRecords();
 
-        try
-        {
-            rows = StorageProxy.getRangeSlice(new RangeSliceCommand(metadata.ksName,
-                                                                    select.getColumnFamily(),
-                                                                    columnFilter,
-                                                                    bounds,
-                                                                    expressions,
-                                                                    limit),
-                                                                    select.getConsistencyLevel());
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
+        List<org.apache.cassandra.db.Row> rows = StorageProxy.getRangeSlice(new RangeSliceCommand(metadata.ksName,
+                                                                                                  select.getColumnFamily(),
+                                                                                                  columnFilter,
+                                                                                                  bounds,
+                                                                                                  expressions,
+                                                                                                  limit),
+                                                                            select.getConsistencyLevel());
 
         // if start key was set and relation was "greater than"
         if (select.getKeyStart() != null && !select.includeStartKey() && !rows.isEmpty())
@@ -665,7 +650,7 @@ public class QueryProcessor
                 ByteBuffer columnName = createIdx.getColumnName().getByteBuffer();
                 // mutating oldCfm directly would be bad, but mutating a copy is fine.
                 CFMetaData cfm = oldCfm.clone();
-                for (ColumnDefinition cd : cfm.getColumn_metadata().values())
+                for (ColumnDefinition cd : cfm.regularColumns())
                 {
                     if (cd.name.equals(columnName))
                     {
@@ -685,7 +670,7 @@ public class QueryProcessor
                 try
                 {
                     cfm.addDefaultIndexNames();
-                    MigrationManager.announceColumnFamilyUpdate(cfm);
+                    MigrationManager.announceColumnFamilyUpdate(cfm, true); // As far as metadata are concerned, CQL2 == thrift
                 }
                 catch (ConfigurationException e)
                 {
@@ -706,7 +691,7 @@ public class QueryProcessor
                 try
                 {
                     CFMetaData updatedCF = dropIdx.generateCFMetadataUpdate();
-                    MigrationManager.announceColumnFamilyUpdate(updatedCF);
+                    MigrationManager.announceColumnFamilyUpdate(updatedCF, true); // As far as metadata are concerned, CQL2 == thrift
                 }
                 catch (ConfigurationException e)
                 {
@@ -763,7 +748,7 @@ public class QueryProcessor
 
                 try
                 {
-                    MigrationManager.announceColumnFamilyUpdate(alterTable.getCFMetaData(keyspace));
+                    MigrationManager.announceColumnFamilyUpdate(alterTable.getCFMetaData(keyspace), true); // As far as metadata are concerned, CQL2 == thrift
                 }
                 catch (ConfigurationException e)
                 {

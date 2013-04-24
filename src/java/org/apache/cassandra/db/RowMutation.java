@@ -26,17 +26,11 @@ import java.util.*;
 import org.apache.commons.lang.StringUtils;
 
 import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.KSMetaData;
 import org.apache.cassandra.config.Schema;
-import org.apache.cassandra.db.marshal.UUIDType;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.thrift.ColumnOrSuperColumn;
-import org.apache.cassandra.thrift.Deletion;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.UUIDGen;
 
 // TODO convert this to a Builder pattern instead of encouraging RM.add directly,
 // which is less-efficient since we have to keep a mutable HashMap around
@@ -46,7 +40,10 @@ public class RowMutation implements IMutation
     public static final String FORWARD_TO = "FWD_TO";
     public static final String FORWARD_FROM = "FWD_FRM";
 
+    // todo this is redundant
+    // when we remove it, also restore SerializationsTest.testRowMutationRead to not regenerate new RowMutations each test
     private final String table;
+
     private final ByteBuffer key;
     // map of column family id to mutations for that column family.
     private final Map<UUID, ColumnFamily> modifications;
@@ -71,6 +68,11 @@ public class RowMutation implements IMutation
         this.table = table;
         this.key = key;
         this.modifications = modifications;
+    }
+
+    public RowMutation(ByteBuffer key, ColumnFamily cf)
+    {
+        this(cf.metadata().ksName, key, cf);
     }
 
     public String getTable()
@@ -98,30 +100,6 @@ public class RowMutation implements IMutation
         return modifications.get(cfId);
     }
 
-    /**
-     * Returns mutation representing a Hints to be sent to <code>address</code>
-     * as soon as it becomes available.  See HintedHandoffManager for more details.
-     */
-    public static RowMutation hintFor(RowMutation mutation, UUID targetId) throws IOException
-    {
-        UUID hintId = UUIDGen.getTimeUUID();
-
-        // determine the TTL for the RowMutation
-        // this is set at the smallest GCGraceSeconds for any of the CFs in the RM
-        // this ensures that deletes aren't "undone" by delivery of an old hint
-        int ttl = Integer.MAX_VALUE;
-        for (ColumnFamily cf : mutation.getColumnFamilies())
-            ttl = Math.min(ttl, cf.metadata().getGcGraceSeconds());
-
-        // serialize the hint with id and version as a composite column name
-        ByteBuffer name = HintedHandOffManager.comparator.decompose(hintId, MessagingService.current_version);
-        ByteBuffer value = ByteBuffer.wrap(FBUtilities.serialize(mutation, serializer, MessagingService.current_version));
-        RowMutation rm = new RowMutation(Table.SYSTEM_KS, UUIDType.instance.decompose(targetId));
-        rm.add(SystemTable.HINTS_CF, name, value, System.currentTimeMillis(), ttl);
-
-        return rm;
-    }
-
     /*
      * Specify a column family name and the corresponding column
      * family object.
@@ -146,7 +124,7 @@ public class RowMutation implements IMutation
         ColumnFamily cf = modifications.get(cfm.cfId);
         if (cf == null)
         {
-            cf = ColumnFamily.create(cfm);
+            cf = TreeMapBackedSortedColumns.factory.create(cfm);
             modifications.put(cfm.cfId, cf);
         }
         return cf;
@@ -260,71 +238,82 @@ public class RowMutation implements IMutation
         return buff.append("])").toString();
     }
 
-
     public static class RowMutationSerializer implements IVersionedSerializer<RowMutation>
     {
-        public void serialize(RowMutation rm, DataOutput dos, int version) throws IOException
+        public void serialize(RowMutation rm, DataOutput out, int version) throws IOException
         {
-            dos.writeUTF(rm.getTable());
-            ByteBufferUtil.writeWithShortLength(rm.key(), dos);
+            if (version < MessagingService.VERSION_20)
+                out.writeUTF(rm.getTable());
+
+            ByteBufferUtil.writeWithShortLength(rm.key(), out);
 
             /* serialize the modifications in the mutation */
             int size = rm.modifications.size();
-            dos.writeInt(size);
-            assert size >= 0;
+            out.writeInt(size);
+            assert size > 0;
             for (Map.Entry<UUID, ColumnFamily> entry : rm.modifications.entrySet())
             {
                 if (version < MessagingService.VERSION_12)
-                    ColumnFamily.serializer.serializeCfId(entry.getKey(), dos, version);
-                ColumnFamily.serializer.serialize(entry.getValue(), dos, version);
+                    ColumnFamily.serializer.serializeCfId(entry.getKey(), out, version);
+                ColumnFamily.serializer.serialize(entry.getValue(), out, version);
             }
         }
 
-        public RowMutation deserialize(DataInput dis, int version, ColumnSerializer.Flag flag) throws IOException
+        public RowMutation deserialize(DataInput in, int version, ColumnSerializer.Flag flag) throws IOException
         {
-            String table = dis.readUTF();
-            ByteBuffer key = ByteBufferUtil.readWithShortLength(dis);
-            int size = dis.readInt();
+            String table = null; // will always be set from cf.metadata but javac isn't smart enough to see that
+            if (version < MessagingService.VERSION_20)
+                table = in.readUTF();
+
+            ByteBuffer key = ByteBufferUtil.readWithShortLength(in);
+            int size = in.readInt();
+            assert size > 0;
 
             Map<UUID, ColumnFamily> modifications;
             if (size == 1)
             {
-                ColumnFamily cf = deserializeOneCf(dis, version, flag);
+                ColumnFamily cf = deserializeOneCf(in, version, flag);
                 modifications = Collections.singletonMap(cf.id(), cf);
+                table = cf.metadata().ksName;
             }
             else
             {
                 modifications = new HashMap<UUID, ColumnFamily>();
                 for (int i = 0; i < size; ++i)
                 {
-                    ColumnFamily cf = deserializeOneCf(dis, version, flag);
+                    ColumnFamily cf = deserializeOneCf(in, version, flag);
                     modifications.put(cf.id(), cf);
+                    table = cf.metadata().ksName;
                 }
             }
 
             return new RowMutation(table, key, modifications);
         }
 
-        private ColumnFamily deserializeOneCf(DataInput dis, int version, ColumnSerializer.Flag flag) throws IOException
+        private ColumnFamily deserializeOneCf(DataInput in, int version, ColumnSerializer.Flag flag) throws IOException
         {
             // We used to uselessly write the cf id here
             if (version < MessagingService.VERSION_12)
-                ColumnFamily.serializer.deserializeCfId(dis, version);
-            ColumnFamily cf = ColumnFamily.serializer.deserialize(dis, flag, TreeMapBackedSortedColumns.factory(), version);
+                ColumnFamily.serializer.deserializeCfId(in, version);
+            ColumnFamily cf = ColumnFamily.serializer.deserialize(in, UnsortedColumns.factory, flag, version);
             // We don't allow RowMutation with null column family, so we should never get null back.
             assert cf != null;
             return cf;
         }
 
-        public RowMutation deserialize(DataInput dis, int version) throws IOException
+        public RowMutation deserialize(DataInput in, int version) throws IOException
         {
-            return deserialize(dis, version, ColumnSerializer.Flag.FROM_REMOTE);
+            return deserialize(in, version, ColumnSerializer.Flag.FROM_REMOTE);
         }
 
         public long serializedSize(RowMutation rm, int version)
         {
             TypeSizes sizes = TypeSizes.NATIVE;
-            int size = sizes.sizeof(rm.getTable());
+            int size = 0;
+
+            if (version < MessagingService.VERSION_20)
+                size += sizes.sizeof(rm.getTable());
+
             int keySize = rm.key().remaining();
             size += sizes.sizeof((short) keySize) + keySize;
 

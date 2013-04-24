@@ -36,27 +36,10 @@ import org.apache.cassandra.utils.*;
  */
 public class IndexHelper
 {
-
-    /**
-     * Skip the bloom filter
-     * @param in the data input from which the bloom filter should be skipped
-     * @throws IOException
-     */
     public static void skipBloomFilter(DataInput in) throws IOException
     {
-        /* size of the bloom filter */
         int size = in.readInt();
-        /* skip the serialized bloom filter */
-        if (in instanceof FileDataInput)
-        {
-            FileUtils.skipBytesFully(in, size);
-        }
-        else
-        {
-            // skip bytes
-            byte[] skip = new byte[size];
-            in.readFully(skip);
-        }
+        FileUtils.skipBytesFully(in, size);
     }
 
     /**
@@ -103,34 +86,6 @@ public class IndexHelper
         assert in.bytesPastMark(mark) == columnIndexSize;
 
         return indexList;
-    }
-
-    public static IFilter defreezeBloomFilter(FileDataInput file, FilterFactory.Type type) throws IOException
-    {
-        return defreezeBloomFilter(file, Integer.MAX_VALUE, type);
-    }
-
-    /**
-     * De-freeze the bloom filter.
-     *
-     * @param file - source file
-     * @param maxSize - sanity check: if filter claimes to be larger than this it is bogus
-     * @param type - Bloom Filter type.
-     *
-     * @return bloom filter summarizing the column information
-     * @throws java.io.IOException if an I/O error occurs.
-     * Guarantees that file's current position will be just after the bloom filter, even if
-     * the filter cannot be deserialized, UNLESS EOFException is thrown.
-     */
-    public static IFilter defreezeBloomFilter(FileDataInput file, long maxSize, FilterFactory.Type type) throws IOException
-    {
-        int size = file.readInt();
-        if (size > maxSize || size <= 0)
-            throw new EOFException("bloom filter claims to be " + size + " bytes, longer than entire row size " + maxSize);
-        ByteBuffer bytes = file.readBytes(size);
-
-        DataInputStream stream = new DataInputStream(ByteBufferUtil.inputStream(bytes));
-        return FilterFactory.deserialize(stream, type, false);
     }
 
     /**
@@ -210,12 +165,12 @@ public class IndexHelper
             this.width = width;
         }
 
-        public void serialize(DataOutput dos) throws IOException
+        public void serialize(DataOutput out) throws IOException
         {
-            ByteBufferUtil.writeWithShortLength(firstName, dos);
-            ByteBufferUtil.writeWithShortLength(lastName, dos);
-            dos.writeLong(offset);
-            dos.writeLong(width);
+            ByteBufferUtil.writeWithShortLength(firstName, out);
+            ByteBufferUtil.writeWithShortLength(lastName, out);
+            out.writeLong(offset);
+            out.writeLong(width);
         }
 
         public int serializedSize(TypeSizes typeSizes)
@@ -227,9 +182,15 @@ public class IndexHelper
                    typeSizes.sizeof(offset) + typeSizes.sizeof(width);
         }
 
-        public static IndexInfo deserialize(DataInput dis) throws IOException
+        public static IndexInfo deserialize(DataInput in) throws IOException
         {
-            return new IndexInfo(ByteBufferUtil.readWithShortLength(dis), ByteBufferUtil.readWithShortLength(dis), dis.readLong(), dis.readLong());
+            return new IndexInfo(ByteBufferUtil.readWithShortLength(in), ByteBufferUtil.readWithShortLength(in), in.readLong(), in.readLong());
+        }
+
+        public long memorySize()
+        {
+            long fields = ObjectSizes.getSize(firstName) + ObjectSizes.getSize(lastName) + 8 + 8; 
+            return ObjectSizes.getFieldSize(fields);
         }
     }
 }

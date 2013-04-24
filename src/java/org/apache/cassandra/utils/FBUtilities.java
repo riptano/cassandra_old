@@ -19,7 +19,6 @@ package org.apache.cassandra.utils;
 
 import java.io.*;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -38,12 +37,12 @@ import java.util.zip.Checksum;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.AbstractIterator;
+import com.google.common.primitives.Longs;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.cache.IRowCacheProvider;
-import org.apache.cassandra.concurrent.CreationTimeAwareFuture;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.DecoratedKey;
@@ -53,7 +52,7 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.IAllocator;
-import org.apache.cassandra.net.IAsyncResult;
+import org.apache.cassandra.net.AsyncOneResponse;
 import org.apache.thrift.TBase;
 import org.apache.thrift.TDeserializer;
 import org.apache.thrift.TException;
@@ -384,36 +383,10 @@ public class FBUtilities
         }
     }
 
-    public static void waitOnFutures(List<IAsyncResult> results, long ms) throws TimeoutException
+    public static void waitOnFutures(List<AsyncOneResponse> results, long ms) throws TimeoutException
     {
-        for (IAsyncResult result : results)
+        for (AsyncOneResponse result : results)
             result.get(ms, TimeUnit.MILLISECONDS);
-    }
-
-
-    /**
-     * Waits for the futures to complete.
-     * @param timeout the timeout expressed in <code>TimeUnit</code> units
-     * @param timeUnit TimeUnit
-     * @throws TimeoutException if the waiting time exceeds <code>timeout</code>
-     */
-    public static void waitOnFutures(List<CreationTimeAwareFuture<?>> hintFutures, long timeout, TimeUnit timeUnit) throws TimeoutException
-    {
-        for (Future<?> future : hintFutures)
-        {
-            try
-            {
-                future.get(timeout, timeUnit);
-            }
-            catch (InterruptedException ex)
-            {
-                throw new AssertionError(ex);
-            }
-            catch (ExecutionException e)
-            {
-                throw new RuntimeException(e);
-            }
-        }
     }
 
     public static IPartitioner newPartitioner(String partitionerClassName) throws ConfigurationException
@@ -453,7 +426,7 @@ public class FBUtilities
     }
 
     /**
-     * Constructs an instance of the given class, which must have a no-arg constructor.
+     * Constructs an instance of the given class, which must have a no-arg or default constructor.
      * @param classname Fully qualified classname.
      * @param readable Descriptive noun for the role the class plays.
      * @throws ConfigurationException If the class cannot be found.
@@ -463,11 +436,7 @@ public class FBUtilities
         Class<T> cls = FBUtilities.classForName(classname, readable);
         try
         {
-            return cls.getConstructor().newInstance();
-        }
-        catch (NoSuchMethodException e)
-        {
-            throw new ConfigurationException(String.format("No default constructor for %s class '%s'.", readable, classname));
+            return cls.newInstance();
         }
         catch (IllegalAccessException e)
         {
@@ -477,8 +446,9 @@ public class FBUtilities
         {
             throw new ConfigurationException(String.format("Cannot use abstract class '%s' as %s.", classname, readable));
         }
-        catch (InvocationTargetException e)
+        catch (Exception e)
         {
+            // Catch-all because Class.newInstance() "propagates any exception thrown by the nullary constructor, including a checked exception".
             if (e.getCause() instanceof ConfigurationException)
                 throw (ConfigurationException)e.getCause();
             throw new ConfigurationException(String.format("Error instantiating %s class '%s'.", readable, classname), e);

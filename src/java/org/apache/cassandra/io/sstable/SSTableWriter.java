@@ -147,7 +147,8 @@ public class SSTableWriter extends SSTable
 
         if (logger.isTraceEnabled())
             logger.trace("wrote " + decoratedKey + " at " + dataPosition);
-        RowIndexEntry entry = RowIndexEntry.create(dataPosition, delInfo, index);
+        // range tombstones are part of the Atoms we write as the row contents, so RIE only gets row-level tombstones
+        RowIndexEntry entry = RowIndexEntry.create(dataPosition, delInfo.getTopLevelDeletion(), index);
         iwriter.append(decoratedKey, entry);
         dbuilder.addPotentialBoundary(dataPosition);
         return entry;
@@ -184,7 +185,7 @@ public class SSTableWriter extends SSTable
             DataOutputBuffer buffer = new DataOutputBuffer();
 
             // build column index && write columns
-            ColumnIndex.Builder builder = new ColumnIndex.Builder(cf, decoratedKey.key, cf.getColumnCount(), buffer);
+            ColumnIndex.Builder builder = new ColumnIndex.Builder(cf, decoratedKey.key, buffer);
             ColumnIndex index = builder.build(cf);
 
             TypeSizes typeSizes = TypeSizes.NATIVE;
@@ -240,11 +241,12 @@ public class SSTableWriter extends SSTable
         // deserialize each column to obtain maxTimestamp and immediately serialize it.
         long minTimestamp = Long.MAX_VALUE;
         long maxTimestamp = Long.MIN_VALUE;
+        int maxLocalDeletionTime = Integer.MIN_VALUE;
         StreamingHistogram tombstones = new StreamingHistogram(TOMBSTONE_HISTOGRAM_BIN_SIZE);
-        ColumnFamily cf = ColumnFamily.create(metadata, ArrayBackedSortedColumns.factory());
+        ColumnFamily cf = ArrayBackedSortedColumns.factory.create(metadata);
         cf.delete(deletionInfo);
 
-        ColumnIndex.Builder columnIndexer = new ColumnIndex.Builder(cf, key.key, columnCount, dataFile.stream);
+        ColumnIndex.Builder columnIndexer = new ColumnIndex.Builder(cf, key.key, dataFile.stream, true);
         OnDiskAtom.Serializer atomSerializer = Column.onDiskSerializer();
         for (int i = 0; i < columnCount; i++)
         {
@@ -261,6 +263,8 @@ public class SSTableWriter extends SSTable
             }
             minTimestamp = Math.min(minTimestamp, atom.minTimestamp());
             maxTimestamp = Math.max(maxTimestamp, atom.maxTimestamp());
+            maxLocalDeletionTime = Math.max(maxLocalDeletionTime, atom.getLocalDeletionTime());
+
             try
             {
                 columnIndexer.add(atom); // This write the atom on disk too
@@ -275,6 +279,7 @@ public class SSTableWriter extends SSTable
                 : "incorrect row data size " + dataSize + " written to " + dataFile.getPath() + "; correct is " + (dataFile.getFilePointer() - (dataStart + 8));
         sstableMetadataCollector.updateMinTimestamp(minTimestamp);
         sstableMetadataCollector.updateMaxTimestamp(maxTimestamp);
+        sstableMetadataCollector.updateMaxLocalDeletionTime(maxLocalDeletionTime);
         sstableMetadataCollector.addRowSize(dataFile.getFilePointer() - currentPosition);
         sstableMetadataCollector.addColumnCount(columnCount);
         sstableMetadataCollector.mergeTombstoneHistogram(tombstones);
@@ -316,7 +321,8 @@ public class SSTableWriter extends SSTable
         // main data, close will truncate if necessary
         dataFile.close();
         // write sstable statistics
-        SSTableMetadata sstableMetadata = sstableMetadataCollector.finalizeMetadata(partitioner.getClass().getCanonicalName());
+        SSTableMetadata sstableMetadata = sstableMetadataCollector.finalizeMetadata(partitioner.getClass().getCanonicalName(),
+                                                                                    metadata.getBloomFilterFpChance());
         writeMetadata(descriptor, sstableMetadata);
 
         // save the table of components

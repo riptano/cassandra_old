@@ -24,6 +24,8 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.base.Charsets;
+import org.apache.cassandra.db.index.PerRowSecondaryIndexTest;
+import org.apache.cassandra.db.index.SecondaryIndex;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.slf4j.Logger;
@@ -113,6 +115,8 @@ public class SchemaLoader
         String ks_kcs = "KeyCacheSpace";
         String ks_rcs = "RowCacheSpace";
         String ks_nocommit = "NoCommitlogSpace";
+        String ks_prsi = "PerRowSecondaryIndex";
+
 
         Class<? extends AbstractReplicationStrategy> simple = SimpleStrategy.class;
 
@@ -133,21 +137,9 @@ public class SchemaLoader
 
         // these column definitions will will be applied to the jdbc utf and integer column familes respectively.
         Map<ByteBuffer, ColumnDefinition> integerColumn = new HashMap<ByteBuffer, ColumnDefinition>();
-        integerColumn.put(IntegerType.instance.fromString("42"), new ColumnDefinition(
-            IntegerType.instance.fromString("42"),
-            UTF8Type.instance,
-            null,
-            null,
-            null,
-            null));
+        integerColumn.put(IntegerType.instance.fromString("42"), ColumnDefinition.regularDef(IntegerType.instance.fromString("42"), UTF8Type.instance, null));
         Map<ByteBuffer, ColumnDefinition> utf8Column = new HashMap<ByteBuffer, ColumnDefinition>();
-        utf8Column.put(UTF8Type.instance.fromString("fortytwo"), new ColumnDefinition(
-            UTF8Type.instance.fromString("fortytwo"),
-            IntegerType.instance,
-            null,
-            null,
-            null,
-            null));
+        utf8Column.put(UTF8Type.instance.fromString("fortytwo"), ColumnDefinition.regularDef(UTF8Type.instance.fromString("fortytwo"), IntegerType.instance, null));
 
         // Make it easy to test compaction
         Map<String, String> compactionOptions = new HashMap<String, String>();
@@ -290,11 +282,36 @@ public class SchemaLoader
                                                      opts_rf1,
                                                      standardCFMD(ks_nocommit, "Standard1", withOldCfIds)));
 
+        // PerRowSecondaryIndexTest
+        schema.add(KSMetaData.testMetadata(ks_prsi,
+                                           simple,
+                                           opts_rf1,
+                                           perRowIndexedCFMD(ks_prsi, "Indexed1", withOldCfIds)));
+
 
         if (Boolean.parseBoolean(System.getProperty("cassandra.test.compression", "false")))
             useCompression(schema);
 
         return schema;
+    }
+
+    private static CFMetaData perRowIndexedCFMD(String ksName, String cfName, boolean withOldCfIds)
+    {
+        final Map<String, String> indexOptions = Collections.singletonMap(
+                                                      SecondaryIndex.CUSTOM_INDEX_OPTION_NAME,
+                                                      PerRowSecondaryIndexTest.TestIndex.class.getName());
+        return standardCFMD(ksName, cfName, withOldCfIds)
+                .keyValidator(AsciiType.instance)
+                .columnMetadata(new HashMap<ByteBuffer, ColumnDefinition>()
+                {{
+                        ByteBuffer cName = ByteBuffer.wrap("indexed".getBytes(Charsets.UTF_8));
+                        put(cName, new ColumnDefinition(cName,
+                                AsciiType.instance,
+                                IndexType.CUSTOM,
+                                indexOptions,
+                                ByteBufferUtil.bytesToHex(cName),
+                                null, ColumnDefinition.Type.REGULAR));
+                }});
     }
 
     private static void useCompression(List<KSMetaData> schema)
@@ -338,12 +355,11 @@ public class SchemaLoader
                    {{
                         ByteBuffer cName = ByteBuffer.wrap("birthdate".getBytes(Charsets.UTF_8));
                         IndexType keys = withIdxType ? IndexType.KEYS : null;
-                        put(cName, new ColumnDefinition(cName, LongType.instance, keys, null, withIdxType ? ByteBufferUtil.bytesToHex(cName) : null, null));
+                        put(cName, ColumnDefinition.regularDef(cName, LongType.instance, null).setIndex(withIdxType ? ByteBufferUtil.bytesToHex(cName) : null, keys, null));
                     }});
     }
     private static CFMetaData compositeIndexCFMD(String ksName, String cfName, final Boolean withIdxType, boolean withOldCfIds) throws ConfigurationException
     {
-        final Map<String, String> idxOpts = Collections.singletonMap(CompositesIndex.PREFIX_SIZE_OPTION, "1");
         final CompositeType composite = CompositeType.getInstance(Arrays.asList(new AbstractType<?>[]{UTF8Type.instance, UTF8Type.instance})); 
         return new CFMetaData(ksName,
                 cfName,
@@ -354,7 +370,8 @@ public class SchemaLoader
                 {{
                    ByteBuffer cName = ByteBuffer.wrap("col1".getBytes(Charsets.UTF_8));
                    IndexType idxType = withIdxType ? IndexType.COMPOSITES : null;
-                   put(cName, new ColumnDefinition(cName, UTF8Type.instance, idxType, idxOpts, withIdxType ? "col1_idx" : null, 1));
+                   put(cName, ColumnDefinition.regularDef(cName, UTF8Type.instance, 1)
+                                              .setIndex(withIdxType ? "col1_idx" : null, idxType, Collections.<String, String>emptyMap()));
                 }});
     }
     

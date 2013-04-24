@@ -47,7 +47,7 @@ public class RecoveryManagerTruncateTest extends SchemaLoader
 		ColumnFamily cf;
 
 		// add a single cell
-		cf = ColumnFamily.create("Keyspace1", "Standard1");
+        cf = TreeMapBackedSortedColumns.factory.create("Keyspace1", "Standard1");
 		cf.addColumn(column("col1", "val1", 1L));
         rm = new RowMutation("Keyspace1", ByteBufferUtil.bytes("keymulti"), cf);
 		rm.apply();
@@ -56,7 +56,7 @@ public class RecoveryManagerTruncateTest extends SchemaLoader
 		assertNotNull(getFromTable(table, "Standard1", "keymulti", "col1"));
 
 		// and now truncate it
-		cfs.truncate().get();
+		cfs.truncateBlocking();
         CommitLog.instance.resetUnsafe();
 		CommitLog.instance.recover();
 

@@ -15,7 +15,39 @@ Upgrading
 ---------
     - Replication and strategy options do not accept unknown options anymore.
       This was already the case for CQL3 in 1.2 but this is now the case for
-      thrift to.
+      thrift too.
+    - reduce_cache_sizes_at, reduce_cache_capacity_to, and
+      flush_largest_memtables_at options have been removed from cassandra.yaml.
+    - CacheServiceMBean.reduceCacheSizes() has been removed.
+      Use CacheServiceMBean.set{Key,Row}CacheCapacityInMB() instead.
+    - authority option in cassandra.yaml has been deprecated since 1.2.0,
+      but it has been completely removed in 2.0. Please use 'authorizer' option.
+    - ASSUME command has been removed from cqlsh. Use CQL3 blobAsType() and
+      typeAsBlob() conversion functions instead.
+      See https://cassandra.apache.org/doc/cql3/CQL.html#blobFun for details.
+
+Operations
+----------
+    - Major compactions, cleanup, scrub, and upgradesstables will interrupt 
+      any in-progress compactions (but not repair validations) when invoked.
+    - Disabling autocompactions by setting min/max compaction threshold to 0
+      has been deprecated, instead, use the nodetool commands 'disableautocompaction'
+      and 'enableautocompaction' or set the compaction strategy option enabled = false
+    - ALTER TABLE DROP has been reenabled for CQL3 tables and has new semantics now.
+      See https://cassandra.apache.org/doc/cql3/CQL.html#alterTableStmt and
+      https://issues.apache.org/jira/browse/CASSANDRA-3919 for details.
+
+
+1.2.4
+=====
+    - 'nodetool upgradesstables' now only upgrade/rewrite sstables that are not
+      on the current version (which is usually what you want). Use the new -a
+      flag to recover the old behavior of rewriting all sstables.
+
+Features
+--------
+    - superuser setup delay (10 seconds) can now be overridden using
+      'cassandra.superuser_setup_delay_ms' property.
 
 
 1.2.3

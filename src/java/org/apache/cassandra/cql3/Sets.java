@@ -34,6 +34,7 @@ import org.apache.cassandra.db.marshal.MapType;
 import org.apache.cassandra.db.marshal.SetType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.FBUtilities;
 
 /**
  * Static helper methods and classes for sets.
@@ -71,15 +72,22 @@ public abstract class Sets
             {
                 Term t = rt.prepare(valueSpec);
 
-                if (!(t instanceof Constants.Value))
-                {
-                    if (t instanceof Term.NonTerminal)
-                        throw new InvalidRequestException(String.format("Invalid set literal for %s: bind variables are not supported inside collection literals", receiver));
-                    else
-                        throw new InvalidRequestException(String.format("Invalid set literal for %s: nested collections are not supported", receiver));
-                }
+                if (t instanceof Term.NonTerminal)
+                    throw new InvalidRequestException(String.format("Invalid set literal for %s: bind variables are not supported inside collection literals", receiver));
 
-                if (!values.add(((Constants.Value)t).bytes))
+                // We don't allow prepared marker in collections, nor nested collections (for the later, prepare will throw an exception)
+                assert t instanceof Constants.Value;
+                ByteBuffer bytes = ((Constants.Value)t).bytes;
+                if (bytes == null)
+                    throw new InvalidRequestException("null is not supported inside collections");
+
+                // We don't support value > 64K because the serialization format encode the length as an unsigned short.
+                if (bytes.remaining() > FBUtilities.MAX_UNSIGNED_SHORT)
+                    throw new InvalidRequestException(String.format("Set value is too long. Set values are limited to %d bytes but %d bytes value provided",
+                                                                    FBUtilities.MAX_UNSIGNED_SHORT,
+                                                                    bytes.remaining()));
+
+                if (!values.add(bytes))
                     throw new InvalidRequestException(String.format("Invalid set literal: duplicate value %s", rt));
             }
             return new Value(values);
@@ -207,7 +215,7 @@ public abstract class Sets
             if (value == null)
                 return;
 
-            assert value instanceof Sets.Value;
+            assert value instanceof Sets.Value : value;
 
             Set<ByteBuffer> toAdd = ((Sets.Value)value).elements;
             for (ByteBuffer bb : toAdd)

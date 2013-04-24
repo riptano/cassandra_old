@@ -30,7 +30,6 @@ import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.*;
-import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
@@ -41,7 +40,7 @@ import org.apache.cassandra.utils.SemanticVersion;
 
 public class QueryProcessor
 {
-    public static final SemanticVersion CQL_VERSION = new SemanticVersion("3.0.1");
+    public static final SemanticVersion CQL_VERSION = new SemanticVersion("3.1.0");
 
     private static final Logger logger = LoggerFactory.getLogger(QueryProcessor.class);
 
@@ -180,7 +179,7 @@ public class QueryProcessor
         }
         catch (RequestValidationException e)
         {
-            throw new AssertionError(e);
+            throw new RuntimeException("Error validating " + query, e);
         }
     }
 
@@ -204,17 +203,20 @@ public class QueryProcessor
         logger.trace("CQL QUERY: {}", queryString);
 
         ParsedStatement.Prepared prepared = getStatement(queryString, clientState);
-        ResultMessage.Prepared msg = storePreparedStatement(queryString, prepared, forThrift);
+        ResultMessage.Prepared msg = storePreparedStatement(queryString, clientState.getRawKeyspace(), prepared, forThrift);
 
         assert prepared.statement.getBoundsTerms() == prepared.boundNames.size();
         return msg;
     }
 
-    private static ResultMessage.Prepared storePreparedStatement(String queryString, ParsedStatement.Prepared prepared, boolean forThrift)
+    private static ResultMessage.Prepared storePreparedStatement(String queryString, String keyspace, ParsedStatement.Prepared prepared, boolean forThrift)
     {
+        // Concatenate the current keyspace so we don't mix prepared statements between keyspace (#5352).
+        // (if the keyspace is null, queryString has to have a fully-qualified keyspace so it's fine.
+        String toHash = keyspace == null ? queryString : keyspace + queryString;
         if (forThrift)
         {
-            int statementId = queryString.hashCode();
+            int statementId = toHash.hashCode();
             thriftPreparedStatements.put(statementId, prepared.statement);
             logger.trace(String.format("Stored prepared statement #%d with %d bind markers",
                                        statementId,
@@ -223,7 +225,7 @@ public class QueryProcessor
         }
         else
         {
-            MD5Digest statementId = MD5Digest.compute(queryString);
+            MD5Digest statementId = MD5Digest.compute(toHash);
             logger.trace(String.format("Stored prepared statement %s with %d bind markers",
                                        statementId,
                                        prepared.statement.getBoundsTerms()));

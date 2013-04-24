@@ -19,9 +19,10 @@ package org.apache.cassandra.db.marshal;
 
 import java.nio.ByteBuffer;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.exceptions.SyntaxException;
@@ -173,7 +174,7 @@ public abstract class AbstractType<T> implements Comparator<ByteBuffer>
     }
 
     /* convenience method */
-    public String getColumnsString(Collection<Column> columns)
+    public String getColumnsString(Iterable<Column> columns)
     {
         StringBuilder builder = new StringBuilder();
         for (Column column : columns)
@@ -243,6 +244,24 @@ public abstract class AbstractType<T> implements Comparator<ByteBuffer>
     public boolean isCollection()
     {
         return false;
+    }
+
+    /**
+     * The number of subcomponents this type has.
+     * This is always 1, i.e. the type has only itself as "subcomponents", except for CompositeType.
+     */
+    public int componentsCount()
+    {
+        return 1;
+    }
+
+    /**
+     * Return a list of the "subcomponents" this type has.
+     * This always return a singleton list with the type itself except for CompositeType.
+     */
+    public List<AbstractType<?>> getComponents()
+    {
+        return Collections.<AbstractType<?>>singletonList(this);
     }
 
     /**

@@ -34,7 +34,6 @@ public class Config
 {
     public String cluster_name = "Test Cluster";
     public String authenticator;
-    public String authority; // for backwards compatibility - will log a warning.
     public String authorizer;
     public int permissions_validity_in_ms = 2000;
 
@@ -62,6 +61,8 @@ public class Config
 
     public Long write_request_timeout_in_ms = new Long(10000);
 
+    public Long cas_contention_timeout_in_ms = new Long(1000);
+
     public Long truncate_request_timeout_in_ms = new Long(60000);
 
     public Integer streaming_socket_timeout_in_ms = new Integer(0);
@@ -81,14 +82,15 @@ public class Config
     public Integer ssl_storage_port = 7001;
     public String listen_address;
     public String broadcast_address;
+    public String internode_authenticator;
 
     public Boolean start_rpc = true;
     public String rpc_address;
     public Integer rpc_port = 9160;
     public String rpc_server_type = "sync";
     public Boolean rpc_keepalive = true;
-    public Integer rpc_min_threads = null;
-    public Integer rpc_max_threads = null;
+    public Integer rpc_min_threads = 16;
+    public Integer rpc_max_threads = Integer.MAX_VALUE;
     public Integer rpc_send_buff_size_in_bytes;
     public Integer rpc_recv_buff_size_in_bytes;
     public Integer internode_send_buff_size_in_bytes;
@@ -113,7 +115,7 @@ public class Config
 
     public Integer max_streaming_retries = 3;
 
-    public volatile Integer stream_throughput_outbound_megabits_per_sec;
+    public volatile Integer stream_throughput_outbound_megabits_per_sec = 200;
 
     public String[] data_file_directories;
 
@@ -144,9 +146,6 @@ public class Config
 
     public InternodeCompression internode_compression = InternodeCompression.none;
 
-    public Double flush_largest_memtables_at = 1.0;
-    public Double reduce_cache_sizes_at = 1.0;
-    public double reduce_cache_capacity_to = 0.6;
     public int hinted_handoff_throttle_in_kb = 1024;
     public int max_hints_delivery_threads = 1;
     public boolean compaction_preheat_key_cache = true;
@@ -169,7 +168,10 @@ public class Config
 
     public boolean inter_dc_tcp_nodelay = false;
 
-    private static boolean loadYaml = true;
+    private static boolean isClientMode = false;
+
+    public boolean preheat_kernel_page_cache = false;
+
     private static boolean outboundBindAny = false;
 
     public static boolean getOutboundBindAny()
@@ -182,14 +184,14 @@ public class Config
         outboundBindAny = value;
     }
 
-    public static boolean getLoadYaml()
+    public static boolean isClientMode()
     {
-       return loadYaml;
+       return isClientMode;
     }
 
-    public static void setLoadYaml(boolean value)
+    public static void setClientMode(boolean clientMode)
     {
-        loadYaml = value;
+        isClientMode = clientMode;
     }
 
     public static enum CommitLogSync

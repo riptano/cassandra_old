@@ -32,7 +32,6 @@ import org.apache.cassandra.exceptions.PreparedQueryNotFoundException;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.transport.*;
-import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.MD5Digest;
 import org.apache.cassandra.utils.UUIDGen;
 
@@ -40,7 +39,7 @@ public class ExecuteMessage extends Message.Request
 {
     public static final Message.Codec<ExecuteMessage> codec = new Message.Codec<ExecuteMessage>()
     {
-        public ExecuteMessage decode(ChannelBuffer body)
+        public ExecuteMessage decode(ChannelBuffer body, int version)
         {
             byte[] id = CBUtil.readBytes(body);
 

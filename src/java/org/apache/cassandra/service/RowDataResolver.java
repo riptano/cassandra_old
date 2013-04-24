@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.service;
 
-import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -30,19 +29,14 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.filter.QueryFilter;
-import org.apache.cassandra.db.filter.SliceQueryFilter;
-import org.apache.cassandra.net.IAsyncResult;
-import org.apache.cassandra.net.MessageIn;
-import org.apache.cassandra.net.MessageOut;
-import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.net.*;
 import org.apache.cassandra.utils.CloseableIterator;
 import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.IFilter;
 
 public class RowDataResolver extends AbstractRowResolver
 {
     private int maxLiveCount = 0;
-    public List<IAsyncResult> repairResults = Collections.emptyList();
+    public List<AsyncOneResponse> repairResults = Collections.emptyList();
     private final IDiskAtomFilter filter;
 
     public RowDataResolver(String table, ByteBuffer key, IDiskAtomFilter qFilter)
@@ -58,7 +52,7 @@ public class RowDataResolver extends AbstractRowResolver
     * as full data reads.  In this case we need to compute the most recent version
     * of each column, and send diffs to out-of-date replicas.
     */
-    public Row resolve() throws DigestMismatchException, IOException
+    public Row resolve() throws DigestMismatchException
     {
         if (logger.isDebugEnabled())
             logger.debug("resolving " + replies.size() + " responses");
@@ -108,9 +102,9 @@ public class RowDataResolver extends AbstractRowResolver
      * For each row version, compare with resolved (the superset of all row versions);
      * if it is missing anything, send a mutation to the endpoint it come from.
      */
-    public static List<IAsyncResult> scheduleRepairs(ColumnFamily resolved, String table, DecoratedKey key, List<ColumnFamily> versions, List<InetAddress> endpoints)
+    public static List<AsyncOneResponse> scheduleRepairs(ColumnFamily resolved, String table, DecoratedKey key, List<ColumnFamily> versions, List<InetAddress> endpoints)
     {
-        List<IAsyncResult> results = new ArrayList<IAsyncResult>(versions.size());
+        List<AsyncOneResponse> results = new ArrayList<AsyncOneResponse>(versions.size());
 
         for (int i = 0; i < versions.size(); i++)
         {
@@ -163,7 +157,7 @@ public class RowDataResolver extends AbstractRowResolver
         return ColumnFamilyStore.removeDeleted(resolved, Integer.MIN_VALUE);
     }
 
-    public Row getData() throws IOException
+    public Row getData()
     {
         return replies.iterator().next().payload.row();
     }

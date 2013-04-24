@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.net;
 
-import java.net.InetAddress;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -25,16 +24,19 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-class AsyncResult<T> implements IAsyncResult<T>
+/**
+ * A callback specialized for returning a value from a single target; that is, this is for messages
+ * that we only send to one recipient.
+ */
+public class AsyncOneResponse<T> implements IAsyncCallback<T>
 {
     private T result;
     private final AtomicBoolean done = new AtomicBoolean(false);
     private final Lock lock = new ReentrantLock();
     private final Condition condition;
     private final long startTime;
-    private InetAddress from;
 
-    public AsyncResult()
+    public AsyncOneResponse()
     {
         condition = lock.newCondition();
         startTime = System.currentTimeMillis();
@@ -72,14 +74,13 @@ class AsyncResult<T> implements IAsyncResult<T>
         return result;
     }
 
-    public void result(MessageIn<T> response)
+    public void response(MessageIn<T> response)
     {
         try
         {
             lock.lock();
             if (!done.get())
             {
-                from = response.from;
                 result = response.payload;
                 done.set(true);
                 condition.signal();
@@ -94,10 +95,5 @@ class AsyncResult<T> implements IAsyncResult<T>
     public boolean isLatencyForSnitch()
     {
         return false;
-    }
-
-    public InetAddress getFrom()
-    {
-        return from;
     }
 }

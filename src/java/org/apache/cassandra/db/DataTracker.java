@@ -22,6 +22,7 @@ import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.google.common.base.Predicate;
 import com.google.common.collect.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,7 +36,6 @@ import org.apache.cassandra.notifications.INotification;
 import org.apache.cassandra.notifications.INotificationConsumer;
 import org.apache.cassandra.notifications.SSTableAddedNotification;
 import org.apache.cassandra.notifications.SSTableListChangedNotification;
-import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.Interval;
 import org.apache.cassandra.utils.IntervalTree;
 
@@ -72,6 +72,18 @@ public class DataTracker
     public Set<SSTableReader> getUncompactingSSTables()
     {
         return view.get().nonCompactingSStables();
+    }
+
+    public Iterable<SSTableReader> getUncompactingSSTables(Iterable<SSTableReader> candidates)
+    {
+        final View v = view.get();
+        return Iterables.filter(candidates, new Predicate<SSTableReader>()
+        {
+            public boolean apply(SSTableReader sstable)
+            {
+                return !v.compacting.contains(sstable);
+            }
+        });
     }
 
     public View getView()
@@ -139,6 +151,10 @@ public class DataTracker
             return;
         }
 
+        // back up before creating a new View (which makes the new one eligible for compaction)
+        if (sstable != null)
+            maybeIncrementallyBackup(sstable);
+
         View currentView, newView;
         do
         {
@@ -151,40 +167,32 @@ public class DataTracker
         {
             addNewSSTablesSize(Arrays.asList(sstable));
             notifyAdded(sstable);
-            incrementallyBackup(sstable);
         }
     }
 
-    public void incrementallyBackup(final SSTableReader sstable)
+    public void maybeIncrementallyBackup(final SSTableReader sstable)
     {
         if (!DatabaseDescriptor.isIncrementalBackupsEnabled())
             return;
 
-        Runnable runnable = new Runnable()
-        {
-            public void run()
-            {
-                File backupsDir = Directories.getBackupsDirectory(sstable.descriptor);
-                sstable.createLinks(FileUtils.getCanonicalPath(backupsDir));
-            }
-        };
-        StorageService.tasks.execute(runnable);
+        File backupsDir = Directories.getBackupsDirectory(sstable.descriptor);
+        sstable.createLinks(FileUtils.getCanonicalPath(backupsDir));
     }
 
     /**
      * @return true if we are able to mark the given @param sstables as compacted, before anyone else
      *
      * Note that we could acquire references on the marked sstables and release them in
-     * unmarkCompacting, but since we will never call markCompacted on a sstable marked
+     * unmarkCompacting, but since we will never call markObsolete on a sstable marked
      * as compacting (unless there is a serious bug), we can skip this.
      */
-    public boolean markCompacting(Collection<SSTableReader> sstables)
+    public boolean markCompacting(Iterable<SSTableReader> sstables)
     {
-        assert sstables != null && !sstables.isEmpty();
+        assert sstables != null && !Iterables.isEmpty(sstables);
 
         View currentView = view.get();
         Set<SSTableReader> inactive = Sets.difference(ImmutableSet.copyOf(sstables), currentView.compacting);
-        if (inactive.size() < sstables.size())
+        if (inactive.size() < Iterables.size(sstables))
             return false;
 
         View newView = currentView.markCompacting(inactive);
@@ -192,19 +200,19 @@ public class DataTracker
     }
 
     /**
-     * Removes files from compacting status: this is different from 'markCompacted'
+     * Removes files from compacting status: this is different from 'markObsolete'
      * because it should be run regardless of whether a compaction succeeded.
      */
-    public void unmarkCompacting(Collection<SSTableReader> unmark)
+    public void unmarkCompacting(Iterable<SSTableReader> unmark)
     {
         if (!cfstore.isValid())
         {
-            // We don't know if the original compaction suceeded or failed, which makes it difficult to know
-            // if the sstable reference has already been released.
-            // A "good enough" approach is to mark the sstables involved compacted, which if compaction succeeded
+            // The CF has been dropped.  We don't know if the original compaction suceeded or failed,
+            // which makes it difficult to know if the sstable reference has already been released.
+            // A "good enough" approach is to mark the sstables involved obsolete, which if compaction succeeded
             // is harmlessly redundant, and if it failed ensures that at least the sstable will get deleted on restart.
             for (SSTableReader sstable : unmark)
-                sstable.markCompacted();
+                sstable.markObsolete();
         }
 
         View currentView, newView;
@@ -216,7 +224,7 @@ public class DataTracker
         while (!view.compareAndSet(currentView, newView));
     }
 
-    public void markCompacted(Collection<SSTableReader> sstables, OperationType compactionType)
+    public void markObsolete(Collection<SSTableReader> sstables, OperationType compactionType)
     {
         replace(sstables, Collections.<SSTableReader>emptyList());
         notifySSTablesChanged(sstables, Collections.<SSTableReader>emptyList(), compactionType);
@@ -239,7 +247,7 @@ public class DataTracker
         replace(Collections.<SSTableReader>emptyList(), sstables);
         for (SSTableReader sstable : sstables)
         {
-            incrementallyBackup(sstable);
+            maybeIncrementallyBackup(sstable);
             notifyAdded(sstable);
         }
     }
@@ -356,7 +364,7 @@ public class DataTracker
             long size = sstable.bytesOnDisk();
             StorageMetrics.load.dec(size);
             cfstore.metric.liveDiskSpaceUsed.dec(size);
-            boolean firstToCompact = sstable.markCompacted();
+            boolean firstToCompact = sstable.markObsolete();
             assert firstToCompact : sstable + " was already marked compacted";
             sstable.releaseReference();
         }
@@ -525,7 +533,7 @@ public class DataTracker
             return new View(memtable, memtablesPendingFlush, sstables, compactingNew, intervalTree);
         }
 
-        public View unmarkCompacting(Collection<SSTableReader> tounmark)
+        public View unmarkCompacting(Iterable<SSTableReader> tounmark)
         {
             Set<SSTableReader> compactingNew = ImmutableSet.copyOf(Sets.difference(compacting, ImmutableSet.copyOf(tounmark)));
             return new View(memtable, memtablesPendingFlush, sstables, compactingNew, intervalTree);

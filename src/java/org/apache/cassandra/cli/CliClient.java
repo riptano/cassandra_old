@@ -1311,9 +1311,15 @@ public class CliClient
                 cfDef.setDefault_validation_class(CliUtils.unescapeSQLString(mValue));
                 break;
             case MIN_COMPACTION_THRESHOLD:
-                cfDef.setMin_compaction_threshold(Integer.parseInt(mValue));
+                int threshold = Integer.parseInt(mValue);
+                if (threshold <= 0)
+                    throw new RuntimeException("Disabling compaction by setting min/max compaction thresholds to 0 has been deprecated, set compaction_strategy_options={'enabled':false} instead");
+                cfDef.setMin_compaction_threshold(threshold);
                 break;
             case MAX_COMPACTION_THRESHOLD:
+                threshold = Integer.parseInt(mValue);
+                if (threshold <= 0)
+                    throw new RuntimeException("Disabling compaction by setting min/max compaction thresholds to 0 has been deprecated, set compaction_strategy_options={'enabled':false} instead");
                 cfDef.setMax_compaction_threshold(Integer.parseInt(mValue));
                 break;
             case REPLICATE_ON_WRITE:
@@ -1748,7 +1754,7 @@ public class CliClient
      */
     private void showKeyspace(PrintStream output, KsDef ksDef)
     {
-        output.append("create keyspace ").append(ksDef.name);
+        output.append("create keyspace ").append(CliUtils.maybeEscapeName(ksDef.name));
 
         writeAttr(output, true, "placement_strategy", normaliseType(ksDef.strategy_class, "org.apache.cassandra.locator"));
 
@@ -1771,7 +1777,7 @@ public class CliClient
         output.append(";").append(NEWLINE);
         output.append(NEWLINE);
 
-        output.append("use " + ksDef.name + ";");
+        output.append("use " + CliUtils.maybeEscapeName(ksDef.name) + ";");
         output.append(NEWLINE);
         output.append(NEWLINE);
 
@@ -1790,7 +1796,7 @@ public class CliClient
      */
     private void showColumnFamily(PrintStream output, CfDef cfDef)
     {
-        output.append("create column family ").append(CliUtils.escapeSQLString(cfDef.name));
+        output.append("create column family ").append(CliUtils.maybeEscapeName(cfDef.name));
 
         writeAttr(output, true, "column_type", cfDef.column_type);
         writeAttr(output, false, "comparator", normaliseType(cfDef.comparator_type, "org.apache.cassandra.db.marshal"));

@@ -52,17 +52,17 @@ public class SSTableMetadataSerializerTest
                                                              .replayPosition(rp);
         collector.updateMinTimestamp(minTimestamp);
         collector.updateMaxTimestamp(maxTimestamp);
-        SSTableMetadata originalMetadata = collector.finalizeMetadata(RandomPartitioner.class.getCanonicalName());
+        SSTableMetadata originalMetadata = collector.finalizeMetadata(RandomPartitioner.class.getCanonicalName(), 0.1);
 
         ByteArrayOutputStream byteOutput = new ByteArrayOutputStream();
-        DataOutputStream dos = new DataOutputStream(byteOutput);
+        DataOutputStream out = new DataOutputStream(byteOutput);
 
-        SSTableMetadata.serializer.serialize(originalMetadata, dos);
+        SSTableMetadata.serializer.serialize(originalMetadata, out);
 
         ByteArrayInputStream byteInput = new ByteArrayInputStream(byteOutput.toByteArray());
-        DataInputStream dis = new DataInputStream(byteInput);
+        DataInputStream in = new DataInputStream(byteInput);
         Descriptor desc = new Descriptor(Descriptor.Version.CURRENT, new File("."), "", "", 0, false);
-        SSTableMetadata stats = SSTableMetadata.serializer.deserialize(dis, desc);
+        SSTableMetadata stats = SSTableMetadata.serializer.deserialize(in, desc);
 
         assert stats.estimatedRowSize.equals(originalMetadata.estimatedRowSize);
         assert stats.estimatedRowSize.equals(rowSizes);
@@ -74,6 +74,7 @@ public class SSTableMetadataSerializerTest
         assert stats.maxTimestamp == maxTimestamp;
         assert stats.minTimestamp == originalMetadata.minTimestamp;
         assert stats.maxTimestamp == originalMetadata.maxTimestamp;
+        assert stats.bloomFilterFPChance == originalMetadata.bloomFilterFPChance;
         assert RandomPartitioner.class.getCanonicalName().equals(stats.partitioner);
     }
 }

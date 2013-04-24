@@ -25,6 +25,7 @@ import java.lang.management.ManagementFactory;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousCloseException;
+import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ServerSocketChannel;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
@@ -47,6 +48,7 @@ import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.dht.BootStrapper;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.gms.EchoMessage;
 import org.apache.cassandra.gms.GossipDigestAck;
 import org.apache.cassandra.gms.GossipDigestAck2;
 import org.apache.cassandra.gms.GossipDigestSyn;
@@ -58,6 +60,8 @@ import org.apache.cassandra.metrics.DroppedMessageMetrics;
 import org.apache.cassandra.net.sink.SinkManager;
 import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.*;
+import org.apache.cassandra.service.paxos.Commit;
+import org.apache.cassandra.service.paxos.PrepareResponse;
 import org.apache.cassandra.streaming.*;
 import org.apache.cassandra.streaming.compress.CompressedFileStreamTask;
 import org.apache.cassandra.tracing.Tracing;
@@ -79,7 +83,7 @@ public final class MessagingService implements MessagingServiceMBean
     /**
      * we preface every message with this number so the recipient can validate the sender is sane
      */
-    static final int PROTOCOL_MAGIC = 0xCA552DFA;
+    public static final int PROTOCOL_MAGIC = 0xCA552DFA;
 
     /* All verb handler identifiers */
     public enum Verb
@@ -115,36 +119,51 @@ public final class MessagingService implements MessagingServiceMBean
         MIGRATION_REQUEST,
         GOSSIP_SHUTDOWN,
         _TRACE, // dummy verb so we can use MS.droppedMessages
+        ECHO,
         // use as padding for backwards compatability where a previous version needs to validate a verb from the future.
+        PAXOS_PREPARE,
+        PAXOS_PROPOSE,
+        PAXOS_COMMIT,
+        // remember to add new verbs at the end, since we serialize by ordinal
         UNUSED_1,
         UNUSED_2,
         UNUSED_3,
         ;
-        // remember to add new verbs at the end, since we serialize by ordinal
     }
-
-    public static final Verb[] VERBS = Verb.values();
 
     public static final EnumMap<MessagingService.Verb, Stage> verbStages = new EnumMap<MessagingService.Verb, Stage>(MessagingService.Verb.class)
     {{
         put(Verb.MUTATION, Stage.MUTATION);
-        put(Verb.BINARY, Stage.MUTATION);
         put(Verb.READ_REPAIR, Stage.MUTATION);
         put(Verb.TRUNCATE, Stage.MUTATION);
+        put(Verb.COUNTER_MUTATION, Stage.MUTATION);
+        put(Verb.PAXOS_PREPARE, Stage.MUTATION);
+        put(Verb.PAXOS_PROPOSE, Stage.MUTATION);
+        put(Verb.PAXOS_COMMIT, Stage.MUTATION);
+
         put(Verb.READ, Stage.READ);
+        put(Verb.RANGE_SLICE, Stage.READ);
+        put(Verb.INDEX_SCAN, Stage.READ);
+
         put(Verb.REQUEST_RESPONSE, Stage.REQUEST_RESPONSE);
+        put(Verb.INTERNAL_RESPONSE, Stage.INTERNAL_RESPONSE);
+
         put(Verb.STREAM_REPLY, Stage.MISC); // actually handled by FileStreamTask and streamExecutors
         put(Verb.STREAM_REQUEST, Stage.MISC);
-        put(Verb.RANGE_SLICE, Stage.READ);
         put(Verb.BOOTSTRAP_TOKEN, Stage.MISC);
+        put(Verb.REPLICATION_FINISHED, Stage.MISC);
+        put(Verb.SNAPSHOT, Stage.MISC);
+
         put(Verb.TREE_REQUEST, Stage.ANTI_ENTROPY);
         put(Verb.TREE_RESPONSE, Stage.ANTI_ENTROPY);
         put(Verb.STREAMING_REPAIR_REQUEST, Stage.ANTI_ENTROPY);
         put(Verb.STREAMING_REPAIR_RESPONSE, Stage.ANTI_ENTROPY);
+
         put(Verb.GOSSIP_DIGEST_ACK, Stage.GOSSIP);
         put(Verb.GOSSIP_DIGEST_ACK2, Stage.GOSSIP);
         put(Verb.GOSSIP_DIGEST_SYN, Stage.GOSSIP);
         put(Verb.GOSSIP_SHUTDOWN, Stage.GOSSIP);
+
         put(Verb.DEFINITIONS_UPDATE, Stage.MIGRATION);
         put(Verb.SCHEMA_CHECK, Stage.MIGRATION);
         put(Verb.MIGRATION_REQUEST, Stage.MIGRATION);
@@ -153,6 +172,8 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.INTERNAL_RESPONSE, Stage.INTERNAL_RESPONSE);
         put(Verb.COUNTER_MUTATION, Stage.MUTATION);
         put(Verb.SNAPSHOT, Stage.MISC);
+        put(Verb.ECHO, Stage.GOSSIP);
+
         put(Verb.UNUSED_1, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_2, Stage.INTERNAL_RESPONSE);
         put(Verb.UNUSED_3, Stage.INTERNAL_RESPONSE);
@@ -179,8 +200,8 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.STREAM_REQUEST, StreamRequest.serializer);
         put(Verb.RANGE_SLICE, RangeSliceCommand.serializer);
         put(Verb.BOOTSTRAP_TOKEN, BootStrapper.StringSerializer.instance);
-        put(Verb.TREE_REQUEST, AntiEntropyService.TreeRequest.serializer);
-        put(Verb.TREE_RESPONSE, AntiEntropyService.Validator.serializer);
+        put(Verb.TREE_REQUEST, ActiveRepairService.TreeRequest.serializer);
+        put(Verb.TREE_RESPONSE, ActiveRepairService.Validator.serializer);
         put(Verb.STREAMING_REPAIR_REQUEST, StreamingRepairTask.serializer);
         put(Verb.STREAMING_REPAIR_RESPONSE, UUIDSerializer.serializer);
         put(Verb.GOSSIP_DIGEST_ACK, GossipDigestAck.serializer);
@@ -191,6 +212,10 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.INDEX_SCAN, IndexScanCommand.serializer);
         put(Verb.REPLICATION_FINISHED, null);
         put(Verb.COUNTER_MUTATION, CounterMutation.serializer);
+        put(Verb.ECHO, EchoMessage.serializer);
+        put(Verb.PAXOS_PREPARE, Commit.serializer);
+        put(Verb.PAXOS_PROPOSE, Commit.serializer);
+        put(Verb.PAXOS_COMMIT, Commit.serializer);
     }};
 
     /**
@@ -210,10 +235,13 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.SCHEMA_CHECK, UUIDSerializer.serializer);
         put(Verb.BOOTSTRAP_TOKEN, BootStrapper.StringSerializer.instance);
         put(Verb.REPLICATION_FINISHED, null);
+
+        put(Verb.PAXOS_PREPARE, PrepareResponse.serializer);
+        put(Verb.PAXOS_PROPOSE, BooleanSerializer.serializer);
     }};
 
     /* This records all the results mapped by message Id */
-    private final ExpiringMap<String, CallbackInfo> callbacks;
+    private final ExpiringMap<Integer, CallbackInfo> callbacks;
 
     /**
      * a placeholder class that means "deserialize using the callback." We can't implement this without
@@ -316,9 +344,9 @@ public final class MessagingService implements MessagingServiceMBean
         };
         StorageService.scheduledTasks.scheduleWithFixedDelay(logDropped, LOG_DROPPED_INTERVAL_IN_MS, LOG_DROPPED_INTERVAL_IN_MS, TimeUnit.MILLISECONDS);
 
-        Function<Pair<String, ExpiringMap.CacheableObject<CallbackInfo>>, ?> timeoutReporter = new Function<Pair<String, ExpiringMap.CacheableObject<CallbackInfo>>, Object>()
+        Function<Pair<Integer, ExpiringMap.CacheableObject<CallbackInfo>>, ?> timeoutReporter = new Function<Pair<Integer, ExpiringMap.CacheableObject<CallbackInfo>>, Object>()
         {
-            public Object apply(Pair<String, ExpiringMap.CacheableObject<CallbackInfo>> pair)
+            public Object apply(Pair<Integer, ExpiringMap.CacheableObject<CallbackInfo>> pair)
             {
                 CallbackInfo expiredCallbackInfo = pair.right.value;
                 maybeAddLatency(expiredCallbackInfo.callback, expiredCallbackInfo.target, pair.right.timeout);
@@ -336,7 +364,7 @@ public final class MessagingService implements MessagingServiceMBean
             }
         };
 
-        callbacks = new ExpiringMap<String, CallbackInfo>(DatabaseDescriptor.getMinRpcTimeout(), timeoutReporter);
+        callbacks = new ExpiringMap<Integer, CallbackInfo>(DatabaseDescriptor.getMinRpcTimeout(), timeoutReporter);
 
         MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
         try
@@ -356,7 +384,7 @@ public final class MessagingService implements MessagingServiceMBean
      * @param address the host that replied to the message
      * @param latency
      */
-    public void maybeAddLatency(IMessageCallback cb, InetAddress address, long latency)
+    public void maybeAddLatency(IAsyncCallback cb, InetAddress address, long latency)
     {
         if (cb.isLatencyForSnitch())
             addLatency(address, latency);
@@ -411,7 +439,7 @@ public final class MessagingService implements MessagingServiceMBean
             logger.info("Starting Encrypted Messaging Service on SSL port {}", DatabaseDescriptor.getSSLStoragePort());
         }
 
-        ServerSocketChannel serverChannel = null;
+        ServerSocketChannel serverChannel;
         try
         {
             serverChannel = ServerSocketChannel.open();
@@ -515,9 +543,9 @@ public final class MessagingService implements MessagingServiceMBean
         return verbHandlers.get(type);
     }
 
-    public String addCallback(IMessageCallback cb, MessageOut message, InetAddress to, long timeout)
+    public int addCallback(IAsyncCallback cb, MessageOut message, InetAddress to, long timeout)
     {
-        String messageId = nextId();
+        int messageId = nextId();
         CallbackInfo previous;
 
         // If HH is enabled and this is a mutation message => store the message to track for potential hints.
@@ -532,16 +560,15 @@ public final class MessagingService implements MessagingServiceMBean
 
     private static final AtomicInteger idGen = new AtomicInteger(0);
 
-    // TODO make these integers to avoid unnecessary int -> string -> int conversions
-    private static String nextId()
+    private static int nextId()
     {
-        return Integer.toString(idGen.incrementAndGet());
+        return idGen.incrementAndGet();
     }
 
     /*
-     * @see #sendRR(Message message, InetAddress to, IMessageCallback cb, long timeout)
+     * @see #sendRR(Message message, InetAddress to, IAsyncCallback cb, long timeout)
      */
-    public String sendRR(MessageOut message, InetAddress to, IMessageCallback cb)
+    public int sendRR(MessageOut message, InetAddress to, IAsyncCallback cb)
     {
         return sendRR(message, to, cb, message.getTimeout());
     }
@@ -552,6 +579,7 @@ public final class MessagingService implements MessagingServiceMBean
      * Also holds the message (only mutation messages) to determine if it
      * needs to trigger a hint (uses StorageProxy for that).
      *
+     *
      * @param message message to be sent.
      * @param to      endpoint to which the message needs to be sent
      * @param cb      callback interface which is used to pass the responses or
@@ -560,19 +588,9 @@ public final class MessagingService implements MessagingServiceMBean
      * @param timeout the timeout used for expiration
      * @return an reference to message id used to match with the result
      */
-    public String sendRR(MessageOut message, InetAddress to, IMessageCallback cb, long timeout)
+    public int sendRR(MessageOut message, InetAddress to, IAsyncCallback cb, long timeout)
     {
-        String id = addCallback(cb, message, to, timeout);
-
-        if (cb instanceof AbstractWriteResponseHandler)
-        {
-            PBSPredictor.instance().startWriteOperation(id);
-        }
-        else if (cb instanceof ReadCallback)
-        {
-            PBSPredictor.instance().startReadOperation(id);
-        }
-
+        int id = addCallback(cb, message, to, timeout);
         sendOneWay(message, id, to);
         return id;
     }
@@ -582,7 +600,7 @@ public final class MessagingService implements MessagingServiceMBean
         sendOneWay(message, nextId(), to);
     }
 
-    public void sendReply(MessageOut message, String id, InetAddress to)
+    public void sendReply(MessageOut message, int id, InetAddress to)
     {
         sendOneWay(message, id, to);
     }
@@ -594,7 +612,7 @@ public final class MessagingService implements MessagingServiceMBean
      * @param message messages to be sent.
      * @param to      endpoint to which the message needs to be sent
      */
-    public void sendOneWay(MessageOut message, String id, InetAddress to)
+    public void sendOneWay(MessageOut message, int id, InetAddress to)
     {
         if (logger.isTraceEnabled())
             logger.trace(FBUtilities.getBroadcastAddress() + " sending " + message.verb + " to " + id + "@" + to);
@@ -616,9 +634,9 @@ public final class MessagingService implements MessagingServiceMBean
         connection.enqueue(processedMessage, id);
     }
 
-    public <T> IAsyncResult<T> sendRR(MessageOut message, InetAddress to)
+    public <T> AsyncOneResponse<T> sendRR(MessageOut message, InetAddress to)
     {
-        IAsyncResult<T> iar = new AsyncResult();
+        AsyncOneResponse<T> iar = new AsyncOneResponse<T>();
         sendRR(message, to, iar);
         return iar;
     }
@@ -699,7 +717,7 @@ public final class MessagingService implements MessagingServiceMBean
         }
     }
 
-    public void receive(MessageIn message, String id, long timestamp)
+    public void receive(MessageIn message, int id, long timestamp)
     {
         Tracing.instance().initializeFromMessage(message);
         Tracing.trace("Message received from {}", message.from);
@@ -712,39 +730,25 @@ public final class MessagingService implements MessagingServiceMBean
         ExecutorService stage = StageManager.getStage(message.getMessageType());
         assert stage != null : "No stage for message type " + message.verb;
 
-        if (message.verb == Verb.REQUEST_RESPONSE && PBSPredictor.instance().isLoggingEnabled())
-        {
-            IMessageCallback cb = MessagingService.instance().getRegisteredCallback(id).callback;
-
-            if (cb instanceof AbstractWriteResponseHandler)
-            {
-                PBSPredictor.instance().logWriteResponse(id, timestamp);
-            }
-            else if (cb instanceof ReadCallback)
-            {
-                PBSPredictor.instance().logReadResponse(id, timestamp);
-            }
-        }
-
         stage.execute(runnable);
     }
 
-    public void setCallbackForTests(String messageId, CallbackInfo callback)
+    public void setCallbackForTests(int messageId, CallbackInfo callback)
     {
         callbacks.put(messageId, callback);
     }
 
-    public CallbackInfo getRegisteredCallback(String messageId)
+    public CallbackInfo getRegisteredCallback(int messageId)
     {
         return callbacks.get(messageId);
     }
 
-    public CallbackInfo removeRegisteredCallback(String messageId)
+    public CallbackInfo removeRegisteredCallback(int messageId)
     {
         return callbacks.remove(messageId);
     }
 
-    public long getRegisteredCallbackAge(String messageId)
+    public long getRegisteredCallbackAge(int messageId)
     {
         return callbacks.getAge(messageId);
     }
@@ -881,12 +885,20 @@ public final class MessagingService implements MessagingServiceMBean
                 try
                 {
                     Socket socket = server.accept();
-                    new IncomingTcpConnection(socket).start();
+                    if (authenticate(socket))
+                        new IncomingTcpConnection(socket).start();
+                    else
+                        socket.close();
                 }
                 catch (AsynchronousCloseException e)
                 {
                     // this happens when another thread calls close().
                     logger.info("MessagingService shutting down server thread.");
+                    break;
+                }
+                catch (ClosedChannelException e)
+                {
+                    logger.debug("MessagingService server thread already closed.");
                     break;
                 }
                 catch (IOException e)
@@ -899,6 +911,11 @@ public final class MessagingService implements MessagingServiceMBean
         void close() throws IOException
         {
             server.close();
+        }
+
+        private boolean authenticate(Socket socket)
+        {
+            return DatabaseDescriptor.getInternodeAuthenticator().authenticate(socket.getInetAddress(), socket.getPort());
         }
     }
 

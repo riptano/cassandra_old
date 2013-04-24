@@ -21,8 +21,6 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -30,14 +28,12 @@ import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.db.filter.SliceQueryFilter;
-import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.IReadCommand;
 import org.apache.cassandra.service.RowDataResolver;
-import org.apache.cassandra.utils.IFilter;
 
 
 public abstract class ReadCommand implements IReadCommand
@@ -105,7 +101,7 @@ public abstract class ReadCommand implements IReadCommand
 
     public abstract ReadCommand copy();
 
-    public abstract Row getRow(Table table) throws IOException;
+    public abstract Row getRow(Table table);
 
     public abstract IDiskAtomFilter filter();
 
@@ -134,7 +130,7 @@ public abstract class ReadCommand implements IReadCommand
 
 class ReadCommandSerializer implements IVersionedSerializer<ReadCommand>
 {
-    public void serialize(ReadCommand command, DataOutput dos, int version) throws IOException
+    public void serialize(ReadCommand command, DataOutput out, int version) throws IOException
     {
         // For super columns, when talking to an older node, we need to translate the filter used.
         // That translation can change the filter type (names -> slice), and so change the command type.
@@ -153,29 +149,29 @@ class ReadCommandSerializer implements IVersionedSerializer<ReadCommand>
             }
         }
 
-        dos.writeByte(newCommand.commandType.serializedValue);
+        out.writeByte(newCommand.commandType.serializedValue);
         switch (command.commandType)
         {
             case GET_BY_NAMES:
-                SliceByNamesReadCommand.serializer.serialize(newCommand, superColumn, dos, version);
+                SliceByNamesReadCommand.serializer.serialize(newCommand, superColumn, out, version);
                 break;
             case GET_SLICES:
-                SliceFromReadCommand.serializer.serialize(newCommand, superColumn, dos, version);
+                SliceFromReadCommand.serializer.serialize(newCommand, superColumn, out, version);
                 break;
             default:
                 throw new AssertionError();
         }
     }
 
-    public ReadCommand deserialize(DataInput dis, int version) throws IOException
+    public ReadCommand deserialize(DataInput in, int version) throws IOException
     {
-        ReadCommand.Type msgType = ReadCommand.Type.fromSerializedValue(dis.readByte());
+        ReadCommand.Type msgType = ReadCommand.Type.fromSerializedValue(in.readByte());
         switch (msgType)
         {
             case GET_BY_NAMES:
-                return SliceByNamesReadCommand.serializer.deserialize(dis, version);
+                return SliceByNamesReadCommand.serializer.deserialize(in, version);
             case GET_SLICES:
-                return SliceFromReadCommand.serializer.deserialize(dis, version);
+                return SliceFromReadCommand.serializer.deserialize(in, version);
             default:
                 throw new AssertionError();
         }

@@ -31,7 +31,6 @@ import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.db.filter.QueryPath;
 import org.apache.cassandra.db.filter.SliceQueryFilter;
-import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.net.MessagingService;
@@ -73,8 +72,9 @@ public class SliceFromReadCommand extends ReadCommand
 
         int count = filter.count;
         // We generate a retry if at least one node reply with count live columns but after merge we have less
-        // than the total number of column we are interested in (which may be < count on a retry)
-        if (maxLiveColumns >= count)
+        // than the total number of column we are interested in (which may be < count on a retry).
+        // So in particular, if no host returned count live columns, we know it's not a short read.
+        if (maxLiveColumns < count)
             return null;
 
         int liveCountInRow = row == null || row.cf == null ? 0 : filter.getLiveCount(row.cf);
@@ -130,57 +130,57 @@ public class SliceFromReadCommand extends ReadCommand
 
 class SliceFromReadCommandSerializer implements IVersionedSerializer<ReadCommand>
 {
-    public void serialize(ReadCommand rm, DataOutput dos, int version) throws IOException
+    public void serialize(ReadCommand rm, DataOutput out, int version) throws IOException
     {
-        serialize(rm, null, dos, version);
+        serialize(rm, null, out, version);
     }
 
-    public void serialize(ReadCommand rm, ByteBuffer superColumn, DataOutput dos, int version) throws IOException
+    public void serialize(ReadCommand rm, ByteBuffer superColumn, DataOutput out, int version) throws IOException
     {
         SliceFromReadCommand realRM = (SliceFromReadCommand)rm;
-        dos.writeBoolean(realRM.isDigestQuery());
-        dos.writeUTF(realRM.table);
-        ByteBufferUtil.writeWithShortLength(realRM.key, dos);
+        out.writeBoolean(realRM.isDigestQuery());
+        out.writeUTF(realRM.table);
+        ByteBufferUtil.writeWithShortLength(realRM.key, out);
 
         if (version < MessagingService.VERSION_20)
-            new QueryPath(realRM.cfName, superColumn).serialize(dos);
+            new QueryPath(realRM.cfName, superColumn).serialize(out);
         else
-            dos.writeUTF(realRM.cfName);
+            out.writeUTF(realRM.cfName);
 
-        SliceQueryFilter.serializer.serialize(realRM.filter, dos, version);
+        SliceQueryFilter.serializer.serialize(realRM.filter, out, version);
     }
 
-    public ReadCommand deserialize(DataInput dis, int version) throws IOException
+    public ReadCommand deserialize(DataInput in, int version) throws IOException
     {
-        boolean isDigest = dis.readBoolean();
-        String table = dis.readUTF();
-        ByteBuffer key = ByteBufferUtil.readWithShortLength(dis);
+        boolean isDigest = in.readBoolean();
+        String table = in.readUTF();
+        ByteBuffer key = ByteBufferUtil.readWithShortLength(in);
 
         String cfName;
         ByteBuffer sc = null;
         if (version < MessagingService.VERSION_20)
         {
-            QueryPath path = QueryPath.deserialize(dis);
+            QueryPath path = QueryPath.deserialize(in);
             cfName = path.columnFamilyName;
             sc = path.superColumnName;
         }
         else
         {
-            cfName = dis.readUTF();
+            cfName = in.readUTF();
         }
 
         CFMetaData metadata = Schema.instance.getCFMetaData(table, cfName);
         SliceQueryFilter filter;
         if (version < MessagingService.VERSION_20)
         {
-            filter = SliceQueryFilter.serializer.deserialize(dis, version);
+            filter = SliceQueryFilter.serializer.deserialize(in, version);
 
             if (metadata.cfType == ColumnFamilyType.Super)
                 filter = SuperColumns.fromSCSliceFilter((CompositeType)metadata.comparator, sc, filter);
         }
         else
         {
-            filter = SliceQueryFilter.serializer.deserialize(dis, version);
+            filter = SliceQueryFilter.serializer.deserialize(in, version);
         }
 
         ReadCommand command = new SliceFromReadCommand(table, key, cfName, filter);
