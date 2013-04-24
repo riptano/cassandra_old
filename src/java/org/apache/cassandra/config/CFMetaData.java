@@ -172,7 +172,9 @@ public final class CFMetaData
                                                      + "release_version text,"
                                                      + "rpc_address inet,"
                                                      + "data_center text,"
-                                                     + "rack text"
+                                                     + "rack text,"
+            //TODO: DSP-1968 Where workload is needed we should put an alter-table statement into our code
+                                                     + "workload text"
                                                      + ") WITH COMMENT='known peers in the cluster'");
 
     public static final CFMetaData PeerEventsCf = compile("CREATE TABLE " + SystemTable.PEER_EVENTS_CF + " ("
