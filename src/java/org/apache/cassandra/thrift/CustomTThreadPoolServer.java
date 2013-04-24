@@ -246,7 +246,6 @@ public class CustomTThreadPoolServer extends TServer
             try
             {
                 serverTransport = new TCustomServerSocket(addr, args.keepAlive, args.sendBufferSize, args.recvBufferSize, args.ctx, args.cipherSuites);
-
             }
             catch (TTransportException e)
             {
