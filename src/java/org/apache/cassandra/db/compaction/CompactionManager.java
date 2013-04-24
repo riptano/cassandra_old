@@ -27,10 +27,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
-import com.google.common.base.Predicates;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ConcurrentHashMultiset;
-import com.google.common.collect.Iterators;
 import com.google.common.collect.Multiset;
 import com.google.common.primitives.Longs;
 import org.slf4j.Logger;
@@ -54,7 +52,6 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.sstable.*;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.metrics.CompactionMetrics;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.service.AntiEntropyService;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
@@ -265,7 +262,7 @@ public class CompactionManager implements CompactionManagerMBean
         });
     }
 
-    public void performSSTableRewrite(ColumnFamilyStore cfStore) throws InterruptedException, ExecutionException
+    public void performSSTableRewrite(ColumnFamilyStore cfStore, final boolean excludeCurrentVersion) throws InterruptedException, ExecutionException
     {
         performAllSSTableOperation(cfStore, new AllSSTablesOperation()
         {
@@ -273,6 +270,9 @@ public class CompactionManager implements CompactionManagerMBean
             {
                 for (final SSTableReader sstable : sstables)
                 {
+                    if (excludeCurrentVersion && sstable.descriptor.version.equals(Descriptor.Version.CURRENT))
+                        continue;
+
                     // SSTables are marked by the caller
                     // NOTE: it is important that the task create one and only one sstable, even for Leveled compaction (see LeveledManifest.replace())
                     CompactionTask task = new CompactionTask(cfs, Collections.singletonList(sstable), NO_GC);
