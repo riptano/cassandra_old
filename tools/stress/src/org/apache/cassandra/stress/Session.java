@@ -444,24 +444,6 @@ public class Session implements Serializable
         sigma = numDifferentKeys * STDev;
     }
 
-    private TTransportFactory validateAndSetTransportFactory(String transportFactory)
-    {
-        try
-        {
-            Class factory = Class.forName(transportFactory);
-
-            if(!TTransportFactory.class.isAssignableFrom(factory))
-                throw new IllegalArgumentException(String.format("transport factory '%s' " +
-                        "not derived from TTransportFactory", transportFactory));
-
-            return (TTransportFactory) factory.newInstance();
-        }
-        catch (Exception e)
-        {
-            throw new IllegalArgumentException(String.format("Cannot create a transport factory '%s'.", transportFactory), e);
-        }
-    }
-
     private void validateTransportFactory()
     {
         try
@@ -766,7 +748,29 @@ public class Session implements Serializable
         }
     }
 
-        return client;
+    private void configureTransportFactory(TClientTransportFactory factory)
+    {
+        Map<String, String> options = new HashMap<String, String>();
+        for (String optionKey : factory.supportedOptions())
+            if (System.getProperty(optionKey) != null)
+                options.put(optionKey, System.getProperty(optionKey));
+        factory.setOptions(options);
+    }
+
+    public SimpleClient getNativeClient()
+    {
+        try
+        {
+            String currentNode = nodes[Stress.randomizer.nextInt(nodes.length)];
+            SimpleClient client = new SimpleClient(currentNode, 9042);
+            client.connect(false);
+            client.execute("USE \"Keyspace1\";", org.apache.cassandra.db.ConsistencyLevel.ONE);
+            return client;
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException(e.getMessage());
+        }
     }
 
     public static InetAddress getLocalAddress()
