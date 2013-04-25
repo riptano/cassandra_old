@@ -20,6 +20,9 @@ package org.apache.cassandra.transport;
 import java.util.EnumSet;
 import java.util.UUID;
 
+import org.apache.cassandra.transport.messages.SaslCompleteMessage;
+import org.apache.cassandra.transport.messages.SaslTokenRequestMessage;
+import org.apache.cassandra.transport.messages.SaslTokenResponseMessage;
 import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.buffer.ChannelBuffers;
 import org.jboss.netty.channel.*;
@@ -69,7 +72,10 @@ public abstract class Message
         PREPARE      (9,  Direction.REQUEST,  PrepareMessage.codec),
         EXECUTE      (10, Direction.REQUEST,  ExecuteMessage.codec),
         REGISTER     (11, Direction.REQUEST,  RegisterMessage.codec),
-        EVENT        (12, Direction.RESPONSE, EventMessage.codec);
+        EVENT        (12, Direction.RESPONSE, EventMessage.codec),
+        SASL_REQUEST (13, Direction.REQUEST,  SaslTokenRequestMessage.codec),
+        SASL_RESPONSE(14, Direction.RESPONSE, SaslTokenResponseMessage.codec),
+        SASL_COMPLETE(15, Direction.RESPONSE, SaslCompleteMessage.codec);
 
         public final int opcode;
         public final Direction direction;

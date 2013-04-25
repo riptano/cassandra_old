@@ -70,8 +70,8 @@ public class ServerConnection extends Connection
                     throw new ProtocolException(String.format("Unexpected message %s, expecting STARTUP or OPTIONS", type));
                 break;
             case AUTHENTICATION:
-                if (type != Message.Type.CREDENTIALS)
-                    throw new ProtocolException(String.format("Unexpected message %s, needs authentication through CREDENTIALS message", type));
+                if (type != Message.Type.SASL_REQUEST)
+                    throw new ProtocolException(String.format("Unexpected message %s, needs authentication through SASL_REQUEST message", type));
                 break;
             case READY:
                 if (type == Message.Type.STARTUP)
@@ -96,8 +96,8 @@ public class ServerConnection extends Connection
                 }
                 break;
             case AUTHENTICATION:
-                assert requestType == Message.Type.CREDENTIALS;
-                if (responseType == Message.Type.READY)
+                assert requestType == Message.Type.SASL_REQUEST;
+                if (responseType == Message.Type.SASL_COMPLETE)
                     state = State.READY;
             case READY:
                 break;

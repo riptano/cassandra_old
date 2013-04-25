@@ -33,7 +33,6 @@ import com.google.common.base.Splitter;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
-import org.apache.cassandra.transport.messages.CredentialsMessage;
 import org.apache.cassandra.transport.messages.ExecuteMessage;
 import org.apache.cassandra.transport.messages.OptionsMessage;
 import org.apache.cassandra.transport.messages.PrepareMessage;
@@ -41,10 +40,15 @@ import org.apache.cassandra.transport.messages.QueryMessage;
 import org.apache.cassandra.transport.messages.RegisterMessage;
 import org.apache.cassandra.transport.messages.StartupMessage;
 import org.apache.cassandra.utils.Hex;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import static org.apache.cassandra.config.EncryptionOptions.ClientEncryptionOptions;
 
 public class Client extends SimpleClient
 {
+    private static final Logger logger = LoggerFactory.getLogger(Client.class);
+
     public Client(String host, int port, ClientEncryptionOptions encryptionOptions)
     {
         super(host, port, encryptionOptions);
@@ -77,7 +81,6 @@ public class Client extends SimpleClient
             try
             {
                 Message.Response resp = execute(req);
-                System.out.println("-> " + resp);
             }
             catch (Exception e)
             {
@@ -101,12 +104,12 @@ public class Client extends SimpleClient
             options.put(StartupMessage.CQL_VERSION, "3.0.0");
             while (iter.hasNext())
             {
-               String next = iter.next();
-               if (next.toLowerCase().equals("snappy"))
-               {
-                   options.put(StartupMessage.COMPRESSION, "snappy");
-                   connection.setCompressor(FrameCompressor.SnappyCompressor.instance);
-               }
+                String next = iter.next();
+                if (next.toLowerCase().equals("snappy"))
+                {
+                    options.put(StartupMessage.COMPRESSION, "snappy");
+                    connection.setCompressor(FrameCompressor.SnappyCompressor.instance);
+                }
             }
             return new StartupMessage(options);
         }
@@ -154,16 +157,24 @@ public class Client extends SimpleClient
         }
         else if (msgType.equals("CREDENTIALS"))
         {
-            CredentialsMessage msg = new CredentialsMessage();
+            System.err.println("[ERROR] CREDENTIALS command is deprecated, use AUTHENTICATE instead");
+            return null;
+        }
+        else if (msgType.equals("AUTHENTICATE"))
+        {
+            final Map<String, String> credentials = new HashMap<String, String>();
             while (iter.hasNext())
             {
                 String next = iter.next();
                 String[] kv = next.split("=");
                 if (kv.length != 2)
+                {
+                    System.err.println("[ERROR] Default authentication requires username & password");
                     return null;
-                msg.credentials.put(kv[0], kv[1]);
+                }
+                credentials.put(kv[0], kv[1]);
             }
-            return msg;
+            return initiateSaslAuthentication(credentials);
         }
         else if (msgType.equals("REGISTER"))
         {

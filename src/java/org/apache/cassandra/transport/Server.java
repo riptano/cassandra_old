@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 
+import org.apache.cassandra.transport.sasl.server.Sasl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -112,6 +113,17 @@ public class Server implements CassandraDaemon.Server
 
     public void run()
     {
+        // check that a SaslAuthBridge implementation has been registered
+        // for the configured IAuthenticator. If not, don't start the
+        // server
+        if (! Sasl.isSaslBridgeRegistered())
+        {
+            logger.info("Not starting native transport as no SaslAuthBridge is " +
+                    "registered for the configured IAuthenticator");
+            isRunning.compareAndSet(true, false);
+            return;
+        }
+
         // Configure the server.
         executionHandler = new ExecutionHandler(new RequestThreadPoolExecutor());
         factory = new NioServerSocketChannelFactory(Executors.newCachedThreadPool(), Executors.newCachedThreadPool());
@@ -223,7 +235,7 @@ public class Server implements CassandraDaemon.Server
             pipeline.addLast("dispatcher", dispatcher);
 
             return pipeline;
-      }
+        }
     }
 
     private static class SecurePipelineFactory extends PipelineFactory
@@ -251,7 +263,7 @@ public class Server implements CassandraDaemon.Server
             sslEngine.setUseClientMode(false);
             sslEngine.setEnabledCipherSuites(encryptionOptions.cipher_suites);
             sslEngine.setNeedClientAuth(encryptionOptions.require_client_auth);
-            
+
             SslHandler sslHandler = new SslHandler(sslEngine);
             sslHandler.setIssueHandshake(true);
             ChannelPipeline pipeline = super.getPipeline();
@@ -264,6 +276,7 @@ public class Server implements CassandraDaemon.Server
     {
         private final Server server;
         private static final InetAddress bindAll;
+
         static {
             try
             {
