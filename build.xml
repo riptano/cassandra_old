@@ -25,7 +25,7 @@
     <property name="debuglevel" value="source,lines,vars"/>
 
     <!-- default version and SCM information -->
-    <property name="base.version" value="1.2.2-DSE"/>
+    <property name="base.version" value="1.2.4-DSP-1961-DSE"/>
     <property name="scm.connection" value="scm:git://git.apache.org/cassandra.git"/>
     <property name="scm.developerConnection" value="scm:git://git.apache.org/cassandra.git"/>
     <property name="scm.url" value="http://git-wip-us.apache.org/repos/asf?p=cassandra.git;a=tree"/>
@@ -74,14 +74,14 @@
               value="http://repo2.maven.org/maven2/org/apache/maven/maven-ant-tasks" />
     <!-- details of how and which Maven repository we publish to -->
     <property name="maven.version" value="3.0.3" />
-    <condition property="maven-repository-url" value="http://mvn.riptano.com/content/repositories/releases">
+    <condition property="maven-repository-url" value="https://repository.apache.org/service/local/staging/deploy/maven2">
       <isset property="release"/>
     </condition>
-    <condition property="maven-repository-id" value="datastax-release">
+    <condition property="maven-repository-id" value="apache.releases.https">
       <isset property="release"/>
     </condition>
-    <property name="maven-repository-url" value="http://mvn.riptano.com/content/repositories/snapshots"/>
-    <property name="maven-repository-id" value="datastax-snapshot"/>
+    <property name="maven-repository-url" value="https://repository.apache.org/content/repositories/snapshots"/>
+    <property name="maven-repository-id" value="apache.snapshots.https"/>
 
     <property name="test.timeout" value="60000" />
     <property name="test.long.timeout" value="600000" />
@@ -294,7 +294,7 @@
         <sequential>
           <artifact:mvn mavenVersion="${maven.version}" fork="true" failonerror="true">
             <jvmarg value="-Xmx512m"/>
-            <arg value="deploy:deploy-file" />
+            <arg value="org.apache.maven.plugins:maven-gpg-plugin:1.4:sign-and-deploy-file" />
             <arg value="-DretryFailedDeploymentCount=5" />
             <arg value="-Durl=${maven-repository-url}" />
             <arg value="-DrepositoryId=${maven-repository-id}" />
@@ -302,6 +302,7 @@
             <arg value="-Dfile=@{file}" />
             <arg value="-Dclassifier=@{classifier}" />
             <arg value="-Dpackaging=@{packaging}" />
+            <arg value="-Papache-release" />
           </artifact:mvn>
         </sequential>
       </macrodef>
@@ -444,7 +445,7 @@
                 version="${version}"/>
         <scm connection="${scm.connection}" developerConnection="${scm.developerConnection}" url="${scm.url}"/>
         <dependency groupId="org.xerial.snappy" artifactId="snappy-java"/>
-      	<dependency groupId="net.jpountz.lz4" artifactId="lz4"/>
+        <dependency groupId="net.jpountz.lz4" artifactId="lz4"/>
         <dependency groupId="com.ning" artifactId="compress-lzf"/>
         <dependency groupId="com.google.guava" artifactId="guava"/>
         <dependency groupId="commons-cli" artifactId="commons-cli"/>
@@ -461,7 +462,7 @@
         <dependency groupId="com.github.stephenc.high-scale-lib" artifactId="high-scale-lib"/>
         <dependency groupId="org.yaml" artifactId="snakeyaml"/>
         <dependency groupId="edu.stanford.ppl" artifactId="snaptree"/>
-      	<dependency groupId="org.mindrot" artifactId="jbcrypt"/>
+        <dependency groupId="org.mindrot" artifactId="jbcrypt"/>
         <dependency groupId="com.yammer.metrics" artifactId="metrics-core"/>
         
         <dependency groupId="log4j" artifactId="log4j"/>
@@ -743,7 +744,7 @@
       <jar jarfile="${build.dir}/${ant.project.name}-thrift-${version}.jar"
            basedir="${build.classes.thrift}">
         <fileset dir="${build.classes.main}">
-          <include name="org/apache/cassandra/thrift/TClientTransportFactory.class" />
+          <include name="org/apache/cassandra/thrift/ITransportFactory.class" />
           <include name="org/apache/cassandra/thrift/TFramedTransportFactory.class" />
         </fileset>
         <manifest>
@@ -1011,7 +1012,8 @@
     <javac
      debug="true"
      debuglevel="${debuglevel}"
-     destdir="${test.classes}">
+     destdir="${test.classes}"
+     includeantruntime="false">
       <classpath>
         <path refid="cassandra.classpath"/>
       </classpath>
@@ -1041,7 +1043,6 @@
         <formatter type="xml" usefile="true"/>
         <formatter type="brief" usefile="false"/>
         <jvmarg value="-Dstorage-config=${test.conf}"/>
-        <jvmarg value="-Daccess.properties=${test.conf}/access.properties"/>
         <jvmarg value="-Dlog4j.configuration=log4j-junit.properties" />
         <jvmarg value="-javaagent:${basedir}/lib/jamm-0.2.5.jar" />
         <jvmarg value="-ea"/>
@@ -1130,15 +1131,15 @@
   </target>
 
   <target name="msg-ser-test-10" depends="build-test" description="Tests message serializations on 1.0 messages">
-  	<testmacro suitename="unit" inputdir="${test.unit.src}"
-	           timeout="60000" filter="**/SerializationsTest.java">
-	  <jvmarg value="-Dcassandra.version=1.0"/>
+    <testmacro suitename="unit" inputdir="${test.unit.src}" 
+               timeout="60000" filter="**/SerializationsTest.java">
+      <jvmarg value="-Dcassandra.version=1.0"/>
     </testmacro>
   </target>
 
   <target name="pbs-test" depends="build-test" description="Tests PBS predictor">
-	<testmacro suitename="unit" inputdir="${test.unit.src}"
-	      timeout="15000" filter="**/PBSPredictorTest.java"/>
+    <testmacro suitename="unit" inputdir="${test.unit.src}"
+      timeout="15000" filter="**/PBSPredictorTest.java"/>
   </target>
 
   <target name="long-test" depends="build-test" description="Execute functional tests">
@@ -1359,13 +1360,9 @@
              classifier="javadoc"/>
   </target>
 
-  <!-- For the DataStax fork of Cassandra, we only deploy the cassandra-all,
-       cassandra-thrift and cassandra-client-util jars. Also, the release repo
-       does not allow overwrites, which the deployment of source & javadoc 
-       artifacts in the way defined here requires, so *only* deploy the jars
-  -->
   <target name="publish"
           depends="mvn-install"
+          if="release"
           description="Publishes the artifacts to the Maven repository">
           
     <!-- the parent -->
@@ -1374,7 +1371,6 @@
             packaging="pom"/>
 
     <!-- the distribution -->
-    <!--
     <deploy pomFile="${build.dir}/${final.name}-dist.pom"
             file="${build.dir}/${final.name}-dist.pom"
             packaging="pom"/>
@@ -1386,41 +1382,34 @@
             file="${build.dir}/${final.name}-src.tar.gz"
             packaging="tar.gz"
             classifier="src"/>
-     -->
-
+          
     <!-- the cassandra-thrift jar -->  
     <deploy pomFile="${build.dir}/${ant.project.name}-thrift-${version}.pom"
             file="${build.dir}/${ant.project.name}-thrift-${version}.jar"/>
-    <!--
     <deploy pomFile="${build.dir}/${ant.project.name}-thrift-${version}.pom"
             file="${build.dir}/${ant.project.name}-thrift-${version}-sources.jar"
             classifier="sources"/>
     <deploy pomFile="${build.dir}/${ant.project.name}-thrift-${version}.pom"
             file="${build.dir}/${ant.project.name}-thrift-${version}-javadoc.jar"
             classifier="javadoc"/>
-    -->
 
     <!-- the cassandra-clientutil jar -->  
     <deploy pomFile="${build.dir}/${ant.project.name}-clientutil-${version}.pom"
             file="${build.dir}/${ant.project.name}-clientutil-${version}.jar"/>
-    <!--
     <deploy pomFile="${build.dir}/${ant.project.name}-clientutil-${version}.pom"
              file="${build.dir}/${ant.project.name}-clientutil-${version}-sources.jar"
              classifier="sources"/>
     <deploy pomFile="${build.dir}/${ant.project.name}-clientutil-${version}.pom"
              file="${build.dir}/${ant.project.name}-clientutil-${version}-javadoc.jar"
              classifier="javadoc"/>
-    -->
     <!-- the cassandra-all jar -->
     <deploy pomFile="${build.dir}/${final.name}.pom"
             file="${build.dir}/${final.name}.jar"/>
-    <!--
     <deploy pomFile="${build.dir}/${final.name}.pom"
             file="${build.dir}/${final.name}-sources.jar"
             classifier="sources"/>
     <deploy pomFile="${build.dir}/${final.name}.pom"
             file="${build.dir}/${final.name}-javadoc.jar"
             classifier="javadoc"/>
-    -->
   </target>
 </project>
