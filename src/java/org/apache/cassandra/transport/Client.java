@@ -33,18 +33,17 @@ import com.google.common.base.Splitter;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
-import org.apache.cassandra.transport.messages.CredentialsMessage;
-import org.apache.cassandra.transport.messages.ExecuteMessage;
-import org.apache.cassandra.transport.messages.OptionsMessage;
-import org.apache.cassandra.transport.messages.PrepareMessage;
-import org.apache.cassandra.transport.messages.QueryMessage;
-import org.apache.cassandra.transport.messages.RegisterMessage;
-import org.apache.cassandra.transport.messages.StartupMessage;
+import org.apache.cassandra.transport.messages.*;
 import org.apache.cassandra.utils.Hex;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import static org.apache.cassandra.config.EncryptionOptions.ClientEncryptionOptions;
 
 public class Client extends SimpleClient
 {
+    private static final Logger logger = LoggerFactory.getLogger(Client.class);
+
     public Client(String host, int port, ClientEncryptionOptions encryptionOptions)
     {
         super(host, port, encryptionOptions);
@@ -154,16 +153,14 @@ public class Client extends SimpleClient
         }
         else if (msgType.equals("CREDENTIALS"))
         {
+            System.err.println("[WARN] CREDENTIALS command is deprecated, use AUTHENTICATE instead");
             CredentialsMessage msg = new CredentialsMessage();
-            while (iter.hasNext())
-            {
-                String next = iter.next();
-                String[] kv = next.split("=");
-                if (kv.length != 2)
-                    return null;
-                msg.credentials.put(kv[0], kv[1]);
-            }
+            msg.credentials.putAll(readCredentials(iter));
             return msg;
+        }
+        else if (msgType.equals("AUTHENTICATE"))
+        {
+            return initiateSaslAuthentication(readCredentials(iter));
         }
         else if (msgType.equals("REGISTER"))
         {
@@ -179,6 +176,23 @@ public class Client extends SimpleClient
             }
         }
         return null;
+    }
+
+    private Map<String, String> readCredentials(Iterator<String> iter)
+    {
+        final Map<String, String> credentials = new HashMap<String, String>();
+        while (iter.hasNext())
+        {
+            String next = iter.next();
+            String[] kv = next.split("=");
+            if (kv.length != 2)
+            {
+                System.err.println("[ERROR] Default authentication requires username & password");
+                return null;
+            }
+            credentials.put(kv[0], kv[1]);
+        }
+        return credentials;
     }
 
     public static void main(String[] args) throws Exception

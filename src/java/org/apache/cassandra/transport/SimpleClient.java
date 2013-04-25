@@ -28,7 +28,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.SynchronousQueue;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
+import javax.security.auth.Subject;
+import javax.security.auth.callback.*;
 
+import org.apache.cassandra.auth.IAuthenticator;
+import org.apache.cassandra.transport.messages.SaslCompleteMessage;
+import org.apache.cassandra.transport.messages.SaslTokenRequestMessage;
+import org.apache.cassandra.transport.messages.SaslTokenResponseMessage;
+
+import org.apache.cassandra.transport.sasl.client.SaslAuthenticator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -138,6 +146,46 @@ public class SimpleClient
             bootstrap.releaseExternalResources();
             throw new IOException("Connection Error", future.getCause());
         }
+    }
+
+    public SaslTokenRequestMessage initiateSaslAuthentication(final Map<String, String> credentials)
+    {
+        if(responseHandler.clientAuthenticator == null)
+        {
+            CallbackHandler cbh = new CallbackHandler()
+            {
+                @Override
+                public void handle(Callback[] callbacks) throws IOException, UnsupportedCallbackException
+                {
+                    for (Callback cb : callbacks)
+                    {
+                        if (cb instanceof NameCallback)
+                            ((NameCallback)cb).setName(credentials.get(IAuthenticator.USERNAME_KEY));
+                        else if (cb instanceof PasswordCallback)
+                            ((PasswordCallback)cb).setPassword(
+                                    credentials.get(IAuthenticator.PASSWORD_KEY).toCharArray());
+                    }
+                }
+            };
+
+            logger.debug("Initialising authentication for channel: " + channel);
+            responseHandler.clientAuthenticator = new SaslAuthenticator(new Subject(),
+                                                                        new String[]{"PLAIN"},
+                                                                        null,
+                                                                        "cassandra",
+                                                                        host,
+                                                                        SaslAuthenticator.DEFAULT_PROPERTIES, cbh);
+        }
+
+        if (!responseHandler.clientAuthenticator.isComplete()) {
+            logger.debug("Waiting for authentication to complete..");
+
+            SaslTokenRequestMessage saslTokenMessage = responseHandler.clientAuthenticator.firstToken();
+            logger.info("Got initial sasl token message, writing to channel");
+            return saslTokenMessage;
+        }
+
+        return null;
     }
 
     public void login(Map<String, String> credentials)
@@ -259,19 +307,57 @@ public class SimpleClient
     private static class ResponseHandler extends SimpleChannelUpstreamHandler
     {
         public final BlockingQueue<Message.Response> responses = new SynchronousQueue<Message.Response>(true);
+        public SaslAuthenticator clientAuthenticator;
 
         @Override
         public void messageReceived(ChannelHandlerContext ctx, MessageEvent e)
         {
             assert e.getMessage() instanceof Message.Response;
+            logger.info(e.getMessage().getClass().getName());
+
+            if (e.getMessage() instanceof SaslCompleteMessage)
+            {
+                logger.info("Server has sent us the SaslComplete message. Allowing normal work to proceed.");
+                if (! clientAuthenticator.isComplete())
+                {
+                        String error = "Server returned a Sasl complete message, but client authentication is not complete";
+                        logger.error(error);
+                        throw new RuntimeException(error);
+                }
+            }
+
+            // the message is not a SaslCompleteMessage, so check whether it contains a token from the server
+            if (e.getMessage() instanceof SaslTokenResponseMessage)
+            {
+                SaslTokenResponseMessage responseMessage = (SaslTokenResponseMessage) e.getMessage();
+                // Generate SASL response, but we only actually send the response if it's non-null (null is a valid value if
+                // auth is completed).
+                byte[] responseToServer = clientAuthenticator.evaluateServerToken(responseMessage.getSaslToken());
+                if (responseToServer == null) {
+                    // If we generate a null response, then authentication has completed (if
+                    // not, warn), and return without sending a response back to the server.
+                    logger.debug("Response to server is null: authentication should now be complete.");
+                    if (!clientAuthenticator.isComplete()) {
+                        logger.warn("Generated a null response, but authentication is not complete.");
+                    }
+                    return;
+                } else {
+                    logger.debug("Response to server token has length: " + responseToServer.length);
+                }
+                // Construct a message containing the SASL response and send it to the server.
+                logger.debug("Sending response message back to server");
+                ctx.getChannel().write(new SaslTokenRequestMessage(responseToServer));
+                return;
+            }
+
             try
             {
-                responses.put((Message.Response)e.getMessage());
-            }
-            catch (InterruptedException ie)
+                responses.put((Message.Response) e.getMessage());
+            } catch (InterruptedException ie)
             {
                 throw new RuntimeException(ie);
             }
+
         }
 
         public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e) throws Exception

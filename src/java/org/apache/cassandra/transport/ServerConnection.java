@@ -19,10 +19,16 @@ package org.apache.cassandra.transport;
 
 import java.util.concurrent.ConcurrentMap;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 
+import org.apache.cassandra.transport.sasl.server.Sasl;
+import org.apache.cassandra.transport.sasl.server.SaslAuthBridge;
+import org.apache.cassandra.transport.sasl.server.SaslAuthBridgeFactory;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
+
+import javax.security.sasl.SaslException;
 
 public class ServerConnection extends Connection
 {
@@ -36,6 +42,7 @@ public class ServerConnection extends Connection
 
     private enum State { UNINITIALIZED, AUTHENTICATION, READY; }
 
+    private volatile SaslAuthBridge saslAuthBridge;
     private final ClientState clientState;
     private volatile State state;
 
@@ -70,8 +77,10 @@ public class ServerConnection extends Connection
                     throw new ProtocolException(String.format("Unexpected message %s, expecting STARTUP or OPTIONS", type));
                 break;
             case AUTHENTICATION:
-                if (type != Message.Type.CREDENTIALS)
-                    throw new ProtocolException(String.format("Unexpected message %s, needs authentication through CREDENTIALS message", type));
+                // Support both SASL auth from protocol v2 and the older style Credentials auth from v1
+                if (type != Message.Type.SASL_REQUEST && type != Message.Type.CREDENTIALS)
+                    throw new ProtocolException(String.format("Unexpected message %s, needs authentication " +
+                            "through SASL_REQUEST or CREDENTIALS message", type));
                 break;
             case READY:
                 if (type == Message.Type.STARTUP)
@@ -96,13 +105,24 @@ public class ServerConnection extends Connection
                 }
                 break;
             case AUTHENTICATION:
-                assert requestType == Message.Type.CREDENTIALS;
-                if (responseType == Message.Type.READY)
+                // Support both SASL auth from protocol v2 and the older style Credentials auth from v1
+                assert (requestType == Message.Type.SASL_REQUEST | requestType == Message.Type.CREDENTIALS);
+
+                if ((requestType == Message.Type.SASL_REQUEST && responseType == Message.Type.SASL_COMPLETE )
+                    || (requestType == Message.Type.CREDENTIALS && responseType == Message.Type.READY))
                     state = State.READY;
             case READY:
                 break;
             default:
                 throw new AssertionError();
         }
+    }
+
+    public SaslAuthBridge getSaslBridge() throws SaslException
+    {
+        if (saslAuthBridge == null)
+            saslAuthBridge = Sasl.newSaslBridge(
+                                  DatabaseDescriptor.getAuthenticator().getClass());
+        return saslAuthBridge;
     }
 }
