@@ -30,8 +30,13 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import javax.security.auth.Subject;
 import javax.security.auth.callback.*;
+import javax.security.auth.login.AppConfigurationEntry;
+import javax.security.auth.login.Configuration;
+import javax.security.auth.login.LoginContext;
+import javax.security.auth.login.LoginException;
 
-import org.apache.cassandra.auth.IAuthenticator;
+import com.google.common.collect.Maps;
+import com.sun.security.auth.module.Krb5LoginModule;
 import org.apache.cassandra.transport.messages.SaslCompleteMessage;
 import org.apache.cassandra.transport.messages.SaslTokenRequestMessage;
 import org.apache.cassandra.transport.messages.SaslTokenResponseMessage;
@@ -157,19 +162,16 @@ public class SimpleClient
                 @Override
                 public void handle(Callback[] callbacks) throws IOException, UnsupportedCallbackException
                 {
-                    for (Callback cb : callbacks)
-                    {
-                        if (cb instanceof NameCallback)
-                            ((NameCallback)cb).setName(credentials.get(IAuthenticator.USERNAME_KEY));
-                        else if (cb instanceof PasswordCallback)
-                            ((PasswordCallback)cb).setPassword(
-                                    credentials.get(IAuthenticator.PASSWORD_KEY).toCharArray());
-                    }
                 }
             };
 
             logger.debug("Initialising authentication for channel: " + channel);
-            saslAuthClient = new SaslAuthClient(new Subject(), "PLAIN", "cassandra", "localhost", cbh);
+
+            saslAuthClient = new SaslAuthClient(getSubject(),
+                                                "GSSAPI",
+                                                System.getenv("KRB_PROTOCOL"),
+                                                System.getenv("KRB_HOST"),
+                                                cbh);
             SaslAuthClient.SASL_NETTY_CLIENT.set(channel, saslAuthClient);
         }
 
@@ -365,6 +367,48 @@ public class SimpleClient
             if (this == ctx.getPipeline().getLast())
                 logger.error("Exception in response", e.getCause());
             ctx.sendUpstream(e);
+        }
+    }
+
+
+    private Subject getSubject()
+    {
+        Subject subject = new Subject();
+        try
+        {
+            LoginContext login = new LoginContext("Client", subject, null, new KerberosUserConfiguration());
+            login.login();
+            return subject;
+        }
+        catch(LoginException e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public class KerberosUserConfiguration extends Configuration
+    {
+        private final Map<String, String> kerberosOptions = Maps.newHashMap();
+
+        {
+            kerberosOptions.put("doNotPrompt", "true");
+            kerberosOptions.put("renewTGT", "true");
+            kerberosOptions.put("storeKey", "false");
+            kerberosOptions.put("useKeyTab", "false");
+            kerberosOptions.put("useTicketCache", "true");
+            kerberosOptions.put("ticketCache", System.getenv("KRB5CCNAME"));
+
+        }
+
+        private final AppConfigurationEntry kerberosLogin =
+                new AppConfigurationEntry(Krb5LoginModule.class.getName(),
+                        AppConfigurationEntry.LoginModuleControlFlag.OPTIONAL,
+                        kerberosOptions);
+
+        @Override
+        public AppConfigurationEntry[] getAppConfigurationEntry(String arg0)
+        {
+            return new AppConfigurationEntry[]{kerberosLogin};
         }
     }
 }
