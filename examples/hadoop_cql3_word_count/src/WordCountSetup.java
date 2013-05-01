@@ -120,6 +120,23 @@ public class WordCountSetup
         {
             logger.error("Failed to create index on title", e);
         }
+        
+        query = "CREATE TABLE " + WordCount.KEYSPACE + "."  + WordCount.OUTPUT_COLUMN_FAMILY + 
+                " ( row_id text," +
+                "   word text, " +
+                "   count_num text," +
+                "   PRIMARY KEY (row_id, word) ) ";
+
+        try
+        {
+            logger.info("set up table " + WordCount.OUTPUT_COLUMN_FAMILY);
+            client.execute_cql3_query(ByteBufferUtil.bytes(query), Compression.NONE, ConsistencyLevel.ONE);
+        }
+        catch (InvalidRequestException e)
+        {
+            logger.error("failed to create table " + WordCount.KEYSPACE + "."  + WordCount.OUTPUT_COLUMN_FAMILY, e);
+        }       
+        
     }
     
     private static Cassandra.Iface createConnection() throws TTransportException

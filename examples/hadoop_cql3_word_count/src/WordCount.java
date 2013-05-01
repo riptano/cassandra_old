@@ -21,7 +21,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.cassandra.thrift.*;
-import org.apache.cassandra.hadoop.ColumnFamilyOutputFormat;
+import org.apache.cassandra.hadoop.cql3.ColumnFamilyOutputFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +38,7 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.Reducer.Context;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
@@ -57,13 +58,15 @@ public class WordCount extends Configured implements Tool
 {
     private static final Logger logger = LoggerFactory.getLogger(WordCount.class);
 
-    static final String KEYSPACE = "cql3_worldcount3";
+    static final String KEYSPACE = "cql3_worldcount";
     static final String COLUMN_FAMILY = "inputs";
 
     static final String OUTPUT_REDUCER_VAR = "output_reducer";
     static final String OUTPUT_COLUMN_FAMILY = "output_words";
 
     private static final String OUTPUT_PATH_PREFIX = "/tmp/word_count";
+    
+    private static final String CONF_COLUMN_NAME = "columnname";
 
     public static void main(String[] args) throws Exception
     {
@@ -129,11 +132,44 @@ public class WordCount extends Configured implements Tool
             context.write(key, new IntWritable(sum));
         }
     }
+    
+    public static class ReducerToCassandra extends Reducer<Text, IntWritable, ByteBuffer, List<List<ByteBuffer>>>
+    {
+        private ByteBuffer outputKey;
+
+        protected void setup(org.apache.hadoop.mapreduce.Reducer.Context context)
+        throws IOException, InterruptedException
+        {
+            outputKey = ByteBufferUtil.bytes(context.getConfiguration().get(CONF_COLUMN_NAME));
+        }
+
+        public void reduce(Text word, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException
+        {
+            int sum = 0;
+            for (IntWritable val : values)
+                sum += val.get();
+            context.write(outputKey, Collections.singletonList(getBindVariables(word, sum)));
+        }
+
+        private List<ByteBuffer> getBindVariables(Text word, int sum)
+        {
+            List<ByteBuffer> variables = new ArrayList<ByteBuffer>();
+            variables.add(outputKey);
+            variables.add(ByteBufferUtil.bytes(word.toString()));
+            variables.add(ByteBufferUtil.bytes(String.valueOf(sum)));         
+            return variables;
+        }
+    }
 
     public int run(String[] args) throws Exception
     {
         String outputReducerType = "filesystem";
-
+        if (args != null && args[0].startsWith(OUTPUT_REDUCER_VAR))
+        {
+            String[] s = args[0].split("=");
+            if (s != null && s.length == 2)
+                outputReducerType = s[1];
+        }
         logger.info("output reducer type: " + outputReducerType);
 
         Job job = new Job(getConf(), "wordcount");
@@ -147,6 +183,26 @@ public class WordCount extends Configured implements Tool
             job.setOutputKeyClass(Text.class);
             job.setOutputValueClass(IntWritable.class);
             FileOutputFormat.setOutputPath(job, new Path(OUTPUT_PATH_PREFIX));
+        }
+        else
+        {
+            job.setReducerClass(ReducerToCassandra.class);
+
+            job.setMapOutputKeyClass(Text.class);
+            job.setMapOutputValueClass(IntWritable.class);
+            job.setOutputKeyClass(ByteBuffer.class);
+            job.setOutputValueClass(List.class);
+
+            job.setOutputFormatClass(ColumnFamilyOutputFormat.class);
+
+            ConfigHelper.setOutputColumnFamily(job.getConfiguration(), KEYSPACE, OUTPUT_COLUMN_FAMILY);
+            job.getConfiguration().set(CONF_COLUMN_NAME, "sum");
+            String query = "INSERT INTO " + KEYSPACE + "." + OUTPUT_COLUMN_FAMILY +
+                           " (row_id, word, count_num) " +
+                           " values (?, ?, ?)";
+            CQLConfigHelper.setOutputPreparedStatement(job.getConfiguration(), query);
+            ConfigHelper.setOutputInitialAddress(job.getConfiguration(), "localhost");
+            ConfigHelper.setOutputPartitioner(job.getConfiguration(), "Murmur3Partitioner");
         }
 
         job.setInputFormatClass(ColumnFamilyInputFormat.class);
