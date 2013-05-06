@@ -333,7 +333,6 @@ public class ColumnFamilyRecordReader extends RecordReader<List<IColumn>, Map<By
             CqlRow row = iterator.next();
             for (Column column: row.columns)
             {
-
                 String columnName = getString(column.getName());
                 logger.debug("column: " + columnName);
                 
@@ -366,8 +365,7 @@ public class ColumnFamilyRecordReader extends RecordReader<List<IColumn>, Map<By
                 // update cluster keys
                 keys = clusterKeys.iterator();
                 while(keys.hasNext())
-                {
-                    
+                {                
                     Key key = keys.next();
                     key.value = newKeys.next().value();
                 }
@@ -755,21 +753,6 @@ public class ColumnFamilyRecordReader extends RecordReader<List<IColumn>, Map<By
         }
         else
             partitionKeys.get(0).validator = keyValidator;
-        
-        Column rawComparator = cqlRow.columns.get(3);
-        String comparator = ByteBufferUtil.string(ByteBuffer.wrap(rawComparator.getValue()));
-        logger.debug("column comparator: " + comparator);
-        AbstractType<?> columnValidator = parseType(validator);
-        
-        if (columnValidator instanceof CompositeType)
-        {
-            Iterator<AbstractType<?>> typeItera = ((CompositeType) columnValidator).types.iterator();
-            Iterator<Key> keyItera = clusterKeys.iterator();
-            while (keyItera.hasNext())
-                keyItera.next().validator = typeItera.next();  
-        }
-        else
-            clusterKeys.get(0).validator = columnValidator;
 
     }
     
