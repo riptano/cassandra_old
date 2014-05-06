@@ -11,11 +11,13 @@ public class ClientHolder
 {
     public final Cassandra.Client thriftClient;
     public final TTransport transport;
+    public final String host;
 
-    public ClientHolder(Cassandra.Client thriftClient, TTransport transport)
+    public ClientHolder(Cassandra.Client thriftClient, TTransport transport, String host)
     {
         this.thriftClient = thriftClient;
         this.transport = transport;
+        this.host = host;
     }
 
     public void close()
